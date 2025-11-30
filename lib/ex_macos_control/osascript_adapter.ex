@@ -1,4 +1,19 @@
 defmodule ExMacOSControl.OSAScriptAdapter do
+  @moduledoc """
+  Default adapter implementation using the `osascript` command-line tool.
+
+  This module implements the `ExMacOSControl.Adapter` behaviour and provides
+  macOS automation functionality by executing AppleScript code and Shortcuts
+  via the `osascript` system command.
+
+  ## Implementation Details
+
+  - Uses `System.cmd/2` to execute `osascript` with the provided script
+  - Returns `{:ok, output}` on success (exit code 0)
+  - Returns `{:error, {:exit_code, code, output}}` on failure
+  - Trims whitespace from successful output
+  """
+
   @behaviour ExMacOSControl.Adapter
 
   @impl true
