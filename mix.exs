@@ -1,13 +1,20 @@
 defmodule ExMacosControl.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/houllette/ex_macos_control"
+  @version "0.1.0"
+
   def project do
     [
       app: :ex_macos_control,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      package: package(),
+      description: "Elixir wrapper library for macOS interaction through osascript and Shortcuts",
+      name: "ExMacosControl",
+      docs: docs(),
       aliases: aliases(),
       test_coverage: [tool: ExCoveralls],
       elixirc_paths: elixirc_paths(Mix.env())
@@ -45,6 +52,26 @@ defmodule ExMacosControl.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      maintainers: ["Holden Oullette"],
+      links: %{
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md",
+        "GitHub" => @source_url
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      source_url: @source_url,
+      source_ref: "v#{@version}",
+      extras: ["README.md", "CHANGELOG.md"]
     ]
   end
 
