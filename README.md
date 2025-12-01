@@ -262,6 +262,55 @@ Add Terminal (or your Elixir runtime) to the list of allowed applications.
 
 **Available Modifiers**: `:command`, `:control`, `:option`, `:shift`
 
+### System Events - File Operations
+
+Convenient helpers for file operations using Finder:
+
+```elixir
+# Reveal file in Finder (opens window and selects the file)
+:ok = ExMacOSControl.SystemEvents.reveal_in_finder("/Users/me/Documents/report.pdf")
+# => :ok
+
+# Get currently selected items in Finder
+{:ok, selected} = ExMacOSControl.SystemEvents.get_selected_finder_items()
+# => {:ok, ["/Users/me/file1.txt", "/Users/me/file2.txt"]}
+
+# Empty selection returns empty list
+{:ok, []} = ExMacOSControl.SystemEvents.get_selected_finder_items()
+# => {:ok, []}
+
+# Move file to trash
+:ok = ExMacOSControl.SystemEvents.trash_file("/Users/me/old_file.txt")
+# => :ok
+
+# Complete workflow example
+# 1. Create a test file
+File.write!("/tmp/test.txt", "test content")
+
+# 2. Reveal it in Finder
+:ok = ExMacOSControl.SystemEvents.reveal_in_finder("/tmp/test.txt")
+
+# 3. Get selected items (the file we just revealed should be selected)
+{:ok, selected} = ExMacOSControl.SystemEvents.get_selected_finder_items()
+# => {:ok, ["/tmp/test.txt"]}
+
+# 4. Move to trash when done
+:ok = ExMacOSControl.SystemEvents.trash_file("/tmp/test.txt")
+
+# Error handling
+{:error, error} = ExMacOSControl.SystemEvents.reveal_in_finder("/nonexistent/file")
+# => {:error, %ExMacOSControl.Error{type: :not_found, ...}}
+
+{:error, error} = ExMacOSControl.SystemEvents.trash_file("relative/path")
+# => {:error, %ExMacOSControl.Error{type: :execution_error, message: "Path must be absolute", ...}}
+```
+
+**Important Notes**:
+- File operation paths must be absolute (start with `/`)
+- `reveal_in_finder/1` will open a Finder window and bring Finder to the front
+- `trash_file/1` moves items to Trash (not permanent deletion), but should still be used with caution
+- File operations require Finder access (usually granted automatically)
+
 ### Finder Automation
 
 Control the macOS Finder application:
