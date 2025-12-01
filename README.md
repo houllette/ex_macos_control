@@ -189,6 +189,79 @@ end
 
 **Note**: This module requires automation permission for System Events. macOS may prompt for permission on first use.
 
+### System Events - UI Automation
+
+Control application UI elements programmatically (requires Accessibility permission):
+
+```elixir
+# Click menu items
+:ok = ExMacOSControl.SystemEvents.click_menu_item("Safari", "File", "New Tab")
+# => :ok
+
+:ok = ExMacOSControl.SystemEvents.click_menu_item("TextEdit", "Format", "Make Plain Text")
+# => :ok
+
+# Send keystrokes
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "a")
+# => :ok
+
+# Send keystrokes with modifiers
+:ok = ExMacOSControl.SystemEvents.press_key("Safari", "t", using: [:command])
+# => :ok
+
+# Multiple modifiers (Command+Shift+Q)
+:ok = ExMacOSControl.SystemEvents.press_key("Safari", "q", using: [:command, :shift])
+# => :ok
+
+# Get window properties
+{:ok, props} = ExMacOSControl.SystemEvents.get_window_properties("Safari")
+# => {:ok, %{position: [100, 100], size: [800, 600], title: "Google"}}
+
+# Application with no windows returns nil
+{:ok, nil} = ExMacOSControl.SystemEvents.get_window_properties("AppWithNoWindows")
+# => {:ok, nil}
+
+# Set window bounds
+:ok = ExMacOSControl.SystemEvents.set_window_bounds("Calculator",
+  position: [100, 100],
+  size: [400, 500]
+)
+# => :ok
+
+# Complete UI automation workflow
+# 1. Launch app
+:ok = ExMacOSControl.SystemEvents.launch_application("TextEdit")
+
+# 2. Create new document (Command+N)
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "n", using: [:command])
+
+# 3. Type some text
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "H")
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "e")
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "l")
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "l")
+:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "o")
+
+# 4. Get window properties
+{:ok, props} = ExMacOSControl.SystemEvents.get_window_properties("TextEdit")
+
+# 5. Resize window
+:ok = ExMacOSControl.SystemEvents.set_window_bounds("TextEdit",
+  position: [0, 0],
+  size: [1000, 800]
+)
+```
+
+**Important**: UI automation requires Accessibility permission. Enable in:
+
+System Settings → Privacy & Security → Accessibility
+
+(Or System Preferences → Security & Privacy → Privacy → Accessibility on older macOS)
+
+Add Terminal (or your Elixir runtime) to the list of allowed applications.
+
+**Available Modifiers**: `:command`, `:control`, `:option`, `:shift`
+
 ### Finder Automation
 
 Control the macOS Finder application:
