@@ -8,11 +8,20 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
   - Timeout support for long-running scripts
   - Argument passing to scripts
   - Comprehensive error handling with detailed error messages
+- **JavaScript for Automation (JXA)**: Execute JavaScript-based automation scripts
+  - Full JXA support with timeout and argument passing
+  - Access to ObjC bridge for Objective-C integration
+- **Script File Execution**: Execute scripts from files with automatic language detection
+  - Support for `.applescript`, `.scpt`, `.js`, and `.jxa` file extensions
+  - Explicit language override option
+  - All standard options (timeout, arguments) supported
 - **macOS Shortcuts**: Run Shortcuts on macOS
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
 ## Quick Start
+
+### AppleScript Execution
 
 ```elixir
 # Basic AppleScript execution
@@ -36,7 +45,64 @@ end run
 # Combined options
 {:ok, result} = ExMacOSControl.run_applescript(script, timeout: 5000, args: ["Elixir"])
 # => {:ok, "Hello, Elixir"}
+```
 
+### JavaScript for Automation (JXA)
+
+```elixir
+# Basic JXA execution
+{:ok, result} = ExMacOSControl.run_javascript("(function() { return 'Hello from JXA!'; })()")
+# => {:ok, "Hello from JXA!"}
+
+# Application automation
+{:ok, name} = ExMacOSControl.run_javascript("Application('Finder').name()")
+# => {:ok, "Finder"}
+
+# With arguments
+script = "function run(argv) { return argv[0]; }"
+{:ok, result} = ExMacOSControl.run_javascript(script, args: ["test"])
+# => {:ok, "test"}
+```
+
+### Script File Execution
+
+```elixir
+# Execute AppleScript file (auto-detected from .applescript extension)
+{:ok, result} = ExMacOSControl.run_script_file("/path/to/script.applescript")
+
+# Execute JavaScript file (auto-detected from .js extension)
+{:ok, result} = ExMacOSControl.run_script_file("/path/to/script.js")
+
+# With arguments
+{:ok, result} = ExMacOSControl.run_script_file(
+  "/path/to/script.applescript",
+  args: ["arg1", "arg2"]
+)
+
+# With timeout
+{:ok, result} = ExMacOSControl.run_script_file(
+  "/path/to/script.js",
+  timeout: 5000
+)
+
+# Override language detection for files with non-standard extensions
+{:ok, result} = ExMacOSControl.run_script_file(
+  "/path/to/script.txt",
+  language: :applescript
+)
+
+# All options combined
+{:ok, result} = ExMacOSControl.run_script_file(
+  "/path/to/script.scpt",
+  language: :applescript,
+  args: ["test"],
+  timeout: 10_000
+)
+```
+
+### macOS Shortcuts
+
+```elixir
 # Run macOS Shortcuts
 :ok = ExMacOSControl.run_shortcut("My Shortcut Name")
 ```
