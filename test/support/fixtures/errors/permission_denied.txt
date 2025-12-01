@@ -1,0 +1,1 @@
+System Events got an error: osascript is not allowed to send keystrokes. (-1743)
