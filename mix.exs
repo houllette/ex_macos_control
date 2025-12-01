@@ -46,9 +46,9 @@ defmodule ExMacosControl.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:telemetry, "~> 1.2"},
-      {:tidewave, "~> 0.4", only: :dev},
-      {:bandit, "~> 1.0", only: :dev},
+      {:telemetry, "~> 1.3"},
+      {:tidewave, "~> 0.5", only: :dev},
+      {:bandit, "~> 1.8", only: :dev},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
       {:mox, "~> 1.2", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
