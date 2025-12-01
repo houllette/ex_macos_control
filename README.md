@@ -135,6 +135,50 @@ case ExMacOSControl.list_shortcuts() do
 end
 ```
 
+### System Events - Process Management
+
+Control running applications on macOS:
+
+```elixir
+# List all running apps
+{:ok, processes} = ExMacOSControl.SystemEvents.list_processes()
+# => {:ok, ["Safari", "Finder", "Terminal", "Mail", ...]}
+
+# Check if an app is running
+{:ok, true} = ExMacOSControl.SystemEvents.process_exists?("Safari")
+# => {:ok, true}
+
+{:ok, false} = ExMacOSControl.SystemEvents.process_exists?("NonexistentApp")
+# => {:ok, false}
+
+# Launch an app
+:ok = ExMacOSControl.SystemEvents.launch_application("Calculator")
+# => :ok
+
+# Activate (bring to front) an app - same as launch
+:ok = ExMacOSControl.SystemEvents.activate_application("Safari")
+# => :ok
+
+# Quit an app gracefully
+:ok = ExMacOSControl.SystemEvents.quit_application("Calculator")
+# => :ok
+
+# Full workflow example
+app_name = "Calculator"
+
+# Check if it's running
+case ExMacOSControl.SystemEvents.process_exists?(app_name) do
+  {:ok, false} ->
+    # Not running, launch it
+    ExMacOSControl.SystemEvents.launch_application(app_name)
+  {:ok, true} ->
+    # Already running, bring to front
+    ExMacOSControl.SystemEvents.activate_application(app_name)
+end
+```
+
+**Note**: This module requires automation permission for System Events. macOS may prompt for permission on first use.
+
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
