@@ -1,4 +1,10 @@
-# ExMacosControl
+# ExMacOSControl
+============
+
+[![hex.pm version](https://img.shields.io/hexpm/v/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
+[![hex.pm downloads](https://img.shields.io/hexpm/dt/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
+[![hex.pm license](https://img.shields.io/hexpm/l/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/blob/main/LICENSE)
+[![Last Updated](https://img.shields.io/github/last-commit/houllette/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/commits/master)
 
 An Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA).
 
@@ -421,4 +427,3 @@ mix test
 - **Documentation**: All public functions must have `@doc`, `@spec`, and `@moduledoc`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines and standards.
-

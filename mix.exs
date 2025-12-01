@@ -13,7 +13,7 @@ defmodule ExMacosControl.MixProject do
       deps: deps(),
       package: package(),
       description: "Elixir wrapper library for macOS interaction through osascript and Shortcuts",
-      name: "ExMacosControl",
+      name: "ExMacOSControl",
       docs: docs(),
       aliases: aliases(),
       test_coverage: [tool: ExCoveralls],
@@ -48,6 +48,7 @@ defmodule ExMacosControl.MixProject do
     [
       {:tidewave, "~> 0.4", only: :dev},
       {:bandit, "~> 1.0", only: :dev},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
       {:mox, "~> 1.2", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
@@ -71,7 +72,7 @@ defmodule ExMacosControl.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md", "CHANGELOG.md"]
+      extras: ["README.md"]
     ]
   end
 
