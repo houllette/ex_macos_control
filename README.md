@@ -8,7 +8,10 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
   - Timeout support for long-running scripts
   - Argument passing to scripts
   - Comprehensive error handling with detailed error messages
-- **macOS Shortcuts**: Run Shortcuts on macOS
+- **JavaScript for Automation (JXA)**: Execute JXA code with argument support
+- **macOS Shortcuts**: Run Shortcuts on macOS with input parameter support
+  - Pass strings, numbers, maps, and lists as input
+  - List available shortcuts
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
@@ -37,8 +40,45 @@ end run
 {:ok, result} = ExMacOSControl.run_applescript(script, timeout: 5000, args: ["Elixir"])
 # => {:ok, "Hello, Elixir"}
 
+# JavaScript for Automation (JXA)
+{:ok, result} = ExMacOSControl.run_javascript("(function() { return 'Hello from JXA!'; })()")
+# => {:ok, "Hello from JXA!"}
+
+# JXA with arguments
+{:ok, result} = ExMacOSControl.run_javascript(
+  "function run(argv) { return argv[0]; }",
+  args: ["test"]
+)
+# => {:ok, "test"}
+
 # Run macOS Shortcuts
 :ok = ExMacOSControl.run_shortcut("My Shortcut Name")
+
+# Run Shortcut with string input
+{:ok, result} = ExMacOSControl.run_shortcut("Process Text", input: "Hello, World!")
+
+# Run Shortcut with map input (serialized as JSON)
+{:ok, result} = ExMacOSControl.run_shortcut("Process Data", input: %{
+  "name" => "John",
+  "age" => 30
+})
+
+# Run Shortcut with list input
+{:ok, result} = ExMacOSControl.run_shortcut("Process Items", input: ["item1", "item2", "item3"])
+
+# List available shortcuts
+{:ok, shortcuts} = ExMacOSControl.list_shortcuts()
+# => {:ok, ["Shortcut 1", "Shortcut 2", "My Shortcut"]}
+
+# Check if a shortcut exists before running it
+case ExMacOSControl.list_shortcuts() do
+  {:ok, shortcuts} ->
+    if "My Shortcut" in shortcuts do
+      ExMacOSControl.run_shortcut("My Shortcut")
+    end
+  {:error, reason} ->
+    {:error, reason}
+end
 ```
 
 ## Installation
