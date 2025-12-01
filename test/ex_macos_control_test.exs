@@ -6,4 +6,9 @@ defmodule ExMacosControlTest do
     assert function_exported?(ExMacOSControl, :run_shortcut, 1)
     assert function_exported?(ExMacOSControl, :run_applescript, 1)
   end
+
+  test "exposes run_javascript/1 and run_javascript/2" do
+    assert function_exported?(ExMacOSControl, :run_javascript, 1)
+    assert function_exported?(ExMacOSControl, :run_javascript, 2)
+  end
 end
