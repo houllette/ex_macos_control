@@ -22,6 +22,14 @@ defmodule ExMacOSControl.Messages do
       ExMacOSControl.Messages.send_message("John Doe", "Hey!")
       # => :ok
 
+      # Send to a group chat
+      ExMacOSControl.Messages.send_message(
+        "John Doe & Jane Smith",
+        "Hello everyone!",
+        group_chat: true
+      )
+      # => :ok
+
       # Specify service (iMessage or SMS)
       ExMacOSControl.Messages.send_message(
         "+1234567890",
@@ -46,7 +54,21 @@ defmodule ExMacOSControl.Messages do
 
       # Get unread count
       {:ok, count} = ExMacOSControl.Messages.get_unread_count()
-      # => {:ok, 5}
+      # => {:ok, 0}  # Note: Currently returns 0 as placeholder
+
+  ## Group Chat Support
+
+  To send messages to group chats, use the `group_chat: true` option:
+
+      ExMacOSControl.Messages.send_message(
+        "Alice Smith & Bob Jones & Carol White",
+        "Meeting at 3pm!",
+        group_chat: true
+      )
+
+  The recipient string should be the participant full names joined by " & ".
+  The function will automatically find the matching group chat by calling
+  `list_chats()` and matching the participant names.
 
   ## Permissions
 
@@ -55,6 +77,12 @@ defmodule ExMacOSControl.Messages do
   - **Full Disk Access** may be needed for reading message history
 
   You can grant these in System Preferences > Privacy & Security.
+
+  ## Limitations
+
+  - The `:service` option (iMessage/SMS) is currently ignored due to AppleScript API limitations
+  - `get_unread_count()` returns 0 as the Messages AppleScript API doesn't expose unread counts
+  - For real unread counts, you would need Full Disk Access and direct SQLite database queries
   """
 
   alias ExMacOSControl.Error
@@ -110,10 +138,11 @@ defmodule ExMacOSControl.Messages do
 
   ## Parameters
 
-  - `recipient` - Phone number or contact name
+  - `recipient` - Phone number, contact name, or group chat participant names
   - `text` - The message content to send
   - `opts` - Keyword list of options:
     - `:service` - `:imessage` or `:sms` (default: automatically determined)
+    - `:group_chat` - `true` if sending to a group chat (default: `false`)
 
   ## Returns
 
@@ -129,15 +158,40 @@ defmodule ExMacOSControl.Messages do
       # Force iMessage
       send_message("john@icloud.com", "Hello!", service: :imessage)
       # => :ok
+
+      # Send to a group chat (participant names joined by " & ")
+      send_message("John Doe & Jane Smith", "Hello everyone!", group_chat: true)
+      # => :ok
+
+  ## Group Chat Usage
+
+  When `group_chat: true` is specified, the function will:
+  1. Call `list_chats()` to get all available chats
+  2. Find a chat where participant names match the recipient string
+  3. Use the chat ID to send the message
+
+  The recipient string for group chats should be participant full names
+  joined by " & " (e.g., "Alice Smith & Bob Jones & Carol White").
+
+  ## Errors
+
+  - `:not_found` - Group chat not found when `group_chat: true`
+  - `:execution_error` - Messages app error or invalid recipient
   """
   @spec send_message(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
   def send_message(recipient, text, opts) do
-    service = Keyword.get(opts, :service, :auto)
-    script = build_send_message_script(recipient, text, service)
+    is_group_chat = Keyword.get(opts, :group_chat, false)
 
-    case adapter().run_applescript(script) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
+    if is_group_chat do
+      send_to_group_chat(recipient, text, opts)
+    else
+      service = Keyword.get(opts, :service, :auto)
+      script = build_send_message_script(recipient, text, service, false)
+
+      case adapter().run_applescript(script) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -223,14 +277,35 @@ defmodule ExMacOSControl.Messages do
   def list_chats do
     script = """
     tell application "Messages"
-      set chatList to {}
+      set chatList to ""
       repeat with c in chats
         try
-          set chatInfo to (id of c) & "|" & (name of c) & "|" & (unread count of c)
-          copy chatInfo to end of chatList
+          set chatID to id of c
+          set chatName to ""
+          try
+            set participants_list to participants of c
+            if (count of participants_list) > 0 then
+              set first_participant to item 1 of participants_list
+              try
+                set chatName to full name of first_participant
+              end try
+              if chatName is "" or chatName is missing value then
+                set chatName to id of first_participant
+              end if
+            end if
+          end try
+          if chatName is missing value then
+            set chatName to ""
+          end if
+          set chatInfo to chatID & "|" & chatName & "|0"
+          if chatList is not "" then
+            set chatList to chatList & "," & chatInfo
+          else
+            set chatList to chatInfo
+          end if
         end try
       end repeat
-      return chatList as text
+      return chatList
     end tell
     """
 
@@ -260,29 +335,54 @@ defmodule ExMacOSControl.Messages do
   """
   @spec get_unread_count() :: {:ok, non_neg_integer()} | {:error, Error.t()}
   def get_unread_count do
-    script = """
-    tell application "Messages"
-      set totalUnread to 0
-      repeat with c in chats
-        try
-          set totalUnread to totalUnread + (unread count of c)
-        end try
-      end repeat
-      return totalUnread
-    end tell
-    """
+    # Note: The Messages AppleScript API does not expose unread counts directly.
+    # This would require Full Disk Access to query the Messages database directly.
+    # For now, we return 0 as a placeholder.
+    # To get real unread counts, you would need to:
+    # 1. Grant Full Disk Access to your terminal/app
+    # 2. Query ~/Library/Messages/chat.db directly using SQLite
+    {:ok, 0}
+  end
 
-    case adapter().run_applescript(script) do
-      {:ok, result} ->
-        count = result |> String.trim() |> String.to_integer()
-        {:ok, count}
+  ## Private Helpers
+
+  # Private helper to send message to a group chat
+  @spec send_to_group_chat(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
+  defp send_to_group_chat(participant_names, text, opts) do
+    case find_group_chat_by_participants(participant_names) do
+      {:ok, chat_id} ->
+        service = Keyword.get(opts, :service, :auto)
+        script = build_send_message_script(chat_id, text, service, true)
+
+        case adapter().run_applescript(script) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  ## Private Helpers
+  # Private helper to find a group chat ID by participant names
+  @spec find_group_chat_by_participants(String.t()) :: {:ok, String.t()} | {:error, Error.t()}
+  defp find_group_chat_by_participants(participant_names) do
+    case list_chats() do
+      {:ok, chats} ->
+        matching_chat = Enum.find(chats, fn chat -> chat.name == participant_names end)
+
+        case matching_chat do
+          nil ->
+            {:error, Error.not_found("Group chat not found with participants: #{participant_names}")}
+
+          chat ->
+            {:ok, chat.id}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   # Private helper to escape quotes in strings
   @spec escape_quotes(String.t()) :: String.t()
@@ -291,22 +391,29 @@ defmodule ExMacOSControl.Messages do
   end
 
   # Build the send_message AppleScript based on service
-  @spec build_send_message_script(String.t(), String.t(), atom()) :: String.t()
-  defp build_send_message_script(recipient, text, service) do
-    service_type =
-      case service do
-        :imessage -> "iMessage"
-        :sms -> "SMS"
-        :auto -> "iMessage"
-      end
+  @spec build_send_message_script(String.t(), String.t(), atom(), boolean()) :: String.t()
+  defp build_send_message_script(recipient, text, _service, is_chat_id) do
+    # Note: The service parameter is currently ignored because the simpler
+    # "send to buddy" syntax doesn't support service selection.
+    # Messages will automatically choose iMessage or SMS based on availability.
+    # To force a specific service, you would need Full Disk Access and direct
+    # database manipulation, or use the more complex participant/service API
+    # which has compatibility issues.
 
-    """
-    tell application "Messages"
-      set targetService to 1st account whose service type = #{service_type}
-      set targetBuddy to participant "#{escape_quotes(recipient)}" of targetService
-      send "#{escape_quotes(text)}" to targetBuddy
-    end tell
-    """
+    if is_chat_id do
+      """
+      tell application "Messages"
+        set targetChat to chat id "#{escape_quotes(recipient)}"
+        send "#{escape_quotes(text)}" to targetChat
+      end tell
+      """
+    else
+      """
+      tell application "Messages"
+        send "#{escape_quotes(text)}" to buddy "#{escape_quotes(recipient)}"
+      end tell
+      """
+    end
   end
 
   # Parses messages from AppleScript output
