@@ -45,8 +45,9 @@ defmodule ExMacosControl.MixProject do
 
   defp aliases do
     [
-      tidewave:
-        "run --no-halt -e 'Agent.start(fn -> Bandit.start_link(plug: Tidewave, port: 4000) end)'"
+      tidewave: "run --no-halt -e 'Agent.start(fn -> Bandit.start_link(plug: Tidewave, port: 4000) end)'",
+      quality: ["format --check-formatted", "credo --strict", "dialyzer"],
+      "format.check": ["format --check-formatted"]
     ]
   end
 end
