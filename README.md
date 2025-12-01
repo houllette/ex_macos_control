@@ -43,6 +43,10 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
   - Retrieve recent messages from chats
   - List all active chats with unread counts
   - Get total unread message count
+- **Performance & Reliability**:
+  - Automatic retry logic with exponential/linear backoff
+  - Telemetry events for monitoring and observability
+  - Comprehensive timeout support
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
@@ -597,6 +601,93 @@ ExMacOSControl.Permissions.open_automation_preferences()
 - **Accessibility**: For UI automation (menu items, keystrokes, windows)
 - **Automation**: For controlling specific apps (Safari, Finder, Mail, etc.)
 - **Full Disk Access**: For some operations (e.g., Messages history)
+
+## Performance & Reliability
+
+### Retry Logic
+
+ExMacOSControl includes automatic retry functionality for handling transient failures like timeouts:
+
+```elixir
+alias ExMacOSControl.Retry
+
+# Basic retry with exponential backoff (default: 3 attempts)
+# Retries: immediately, after 200ms, after 400ms
+{:ok, result} = Retry.with_retry(fn ->
+  ExMacOSControl.Finder.get_selection()
+end)
+
+# Custom max attempts with linear backoff
+# Retries: immediately, after 1s, after 1s, after 1s, after 1s
+{:ok, windows} = Retry.with_retry(fn ->
+  ExMacOSControl.SystemEvents.get_window_properties("Safari")
+end, max_attempts: 5, backoff: :linear)
+
+# Combining timeout and retry for reliability
+{:ok, result} = Retry.with_retry(fn ->
+  ExMacOSControl.run_applescript(script, timeout: 10_000)
+end, max_attempts: 3, backoff: :exponential)
+```
+
+**Retry Behavior:**
+- Only retries timeout errors (errors with `type: :timeout`)
+- Non-timeout errors (syntax, permission, not found) return immediately
+- Exponential backoff: 200ms, 400ms, 800ms, 1600ms, etc.
+- Linear backoff: constant 1000ms between retries
+
+**When to Use:**
+- ✅ Timeout errors that may succeed on retry
+- ✅ Operations depending on application state
+- ✅ UI automation affected by system responsiveness
+- ❌ Syntax errors (won't be fixed by retrying)
+- ❌ Permission errors (user intervention required)
+
+### Telemetry
+
+ExMacOSControl emits telemetry events for monitoring and observability:
+
+```elixir
+# In your application.ex
+:telemetry.attach_many(
+  "ex-macos-control-handler",
+  [
+    [:ex_macos_control, :applescript, :start],
+    [:ex_macos_control, :applescript, :stop],
+    [:ex_macos_control, :applescript, :exception],
+    [:ex_macos_control, :retry, :start],
+    [:ex_macos_control, :retry, :stop],
+    [:ex_macos_control, :retry, :error]
+  ],
+  &MyApp.handle_telemetry/4,
+  nil
+)
+
+# Example handler to track slow operations
+defmodule MyApp do
+  def handle_telemetry([:ex_macos_control, :applescript, :stop], measurements, metadata, _) do
+    duration_ms = measurements.duration / 1_000
+
+    if duration_ms > 5_000 do
+      Logger.warning("Slow operation: #{duration_ms}ms - #{metadata.script}")
+    end
+  end
+
+  def handle_telemetry(_, _, _, _), do: :ok
+end
+```
+
+**Available Events:**
+- `[:ex_macos_control, :applescript, :start]` - Script execution begins
+- `[:ex_macos_control, :applescript, :stop]` - Script succeeds (includes `duration` in microseconds)
+- `[:ex_macos_control, :applescript, :exception]` - Script fails (includes `error` details)
+- `[:ex_macos_control, :retry, :*]` - Retry lifecycle events
+
+See [docs/performance.md](docs/performance.md) for comprehensive performance guide including:
+- Timeout configuration recommendations
+- Common bottlenecks and solutions
+- Benchmarking strategies
+- When to use retry logic
+- Complete telemetry event reference
 
 ## Installation
 
