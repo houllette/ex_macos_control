@@ -567,6 +567,37 @@ end
 - Consider adding confirmation prompts before sending messages
 - Test with your own phone number first
 
+## Checking and Managing Permissions
+
+macOS requires explicit permissions for automation. Use the Permissions module to check and manage these:
+
+```elixir
+# Check accessibility permission
+case ExMacOSControl.Permissions.check_accessibility() do
+  {:ok, :granted} ->
+    IO.puts("Ready for UI automation!")
+  {:ok, :not_granted} ->
+    ExMacOSControl.Permissions.show_accessibility_help()
+end
+
+# Check automation permission for specific apps
+ExMacOSControl.Permissions.check_automation("Safari")
+# => {:ok, :granted} | {:ok, :not_granted}
+
+# Get overview of all permissions
+statuses = ExMacOSControl.Permissions.check_all()
+# => %{accessibility: :granted, safari_automation: :not_granted, ...}
+
+# Open System Settings to grant permissions
+ExMacOSControl.Permissions.open_accessibility_preferences()
+ExMacOSControl.Permissions.open_automation_preferences()
+```
+
+**Required Permissions:**
+- **Accessibility**: For UI automation (menu items, keystrokes, windows)
+- **Automation**: For controlling specific apps (Safari, Finder, Mail, etc.)
+- **Full Disk Access**: For some operations (e.g., Messages history)
+
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
