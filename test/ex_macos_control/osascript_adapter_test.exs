@@ -12,8 +12,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTest do
 
     test "returns error tuple on failure" do
       script = "invalid applescript syntax"
-      assert {:error, {:exit_code, code, _output}} = OSAScriptAdapter.run_applescript(script)
-      assert code != 0
+      assert {:error, %ExMacOSControl.Error{} = error} = OSAScriptAdapter.run_applescript(script)
+      assert error.details.exit_code != 0
     end
   end
 
@@ -39,14 +39,14 @@ defmodule ExMacOSControl.OSAScriptAdapterTest do
 
     test "returns error tuple on syntax error" do
       script = "invalid javascript syntax {"
-      assert {:error, {:exit_code, code, _output}} = OSAScriptAdapter.run_javascript(script)
-      assert code != 0
+      assert {:error, %ExMacOSControl.Error{} = error} = OSAScriptAdapter.run_javascript(script)
+      assert error.details.exit_code != 0
     end
 
     test "returns error tuple on execution error" do
       script = "(function() { throw new Error(\"test error\"); })()"
-      assert {:error, {:exit_code, code, _output}} = OSAScriptAdapter.run_javascript(script)
-      assert code != 0
+      assert {:error, %ExMacOSControl.Error{} = error} = OSAScriptAdapter.run_javascript(script)
+      assert error.details.exit_code != 0
     end
 
     test "handles JavaScript undefined return" do

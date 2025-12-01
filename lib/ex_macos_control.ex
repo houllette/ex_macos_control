@@ -14,7 +14,7 @@ defmodule ExMacOSControl do
       {:ok, "Hello, World!"}
 
       # Execute AppleScript with arguments
-      iex> script = "on run argv\nreturn item 1 of argv\nend run"
+      iex> script = "on run argv\\nreturn item 1 of argv\\nend run"
       iex> ExMacOSControl.run_applescript(script, args: ["test"])
       {:ok, "test"}
 
