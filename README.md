@@ -546,3 +546,19 @@ mix test
 - **Documentation**: All public functions must have `@doc`, `@spec`, and `@moduledoc`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines and standards.
+
+## Extending ExMacOSControl
+
+### Creating New App Modules
+
+Want to add automation for additional macOS apps? ExMacOSControl provides comprehensive documentation for creating new app automation modules.
+
+See the [App Module Creation Guide](docs/creating_app_modules.md) for:
+- Step-by-step instructions for creating modules
+- Common patterns and best practices
+- Testing strategies (unit and integration)
+- Complete examples (Music and Calendar modules)
+- Troubleshooting guide
+- Ready-to-use boilerplate templates
+
+The guide includes everything you need to extend ExMacOSControl with new functionality while following established patterns and maintaining code quality standards.
