@@ -64,12 +64,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 None (initial release)
 
+## [0.1.1] - 2025-11-30
+
+### Fixed
+- **Messages.list_chats/0**: Fixed AppleScript syntax error with `unread count` property
+  - Changed from `unread count of c` to `c's unread count` (possessive form required for multi-word properties)
+  - Now properly retrieves chat names from participant full names instead of missing values
+  - Returns `unread: 0` for all chats as Messages AppleScript API doesn't expose unread counts
+- **Messages.get_unread_count/0**: Updated to return `{:ok, 0}` as placeholder
+  - Documents that real unread counts require Full Disk Access and direct SQLite database queries
+- **Messages.send_message/3**: Simplified AppleScript to use `send to buddy` syntax
+  - Fixed issues with service type selection that caused execution errors
+  - Properly handles contact names with correct capitalization
+
+### Added
+- **Messages Group Chat Support**: New `:group_chat` option for `send_message/3`
+  - Send messages to group chats by participant names (e.g., "John Doe & Jane Smith")
+  - Automatically finds matching group chat via `list_chats()` and uses chat ID
+  - Returns `:not_found` error if group chat doesn't exist
+  - Comprehensive test coverage for group chat functionality
+- **Messages Documentation**: Enhanced module documentation with group chat examples and limitations section
+
+### Changed
+- **Messages AppleScript**: Updated to use simpler and more reliable syntax patterns
+  - Individual messages use `send to buddy` syntax
+  - Group messages use `send to chat id` syntax
+
 ## [Unreleased]
 
 ### Planned Features
 - Additional app modules (Music, Photos, Calendar, Contacts, Reminders, Notes, Notification Center)
 - Advanced error handling features
+- Real unread count support via SQLite database access (requires Full Disk Access)
 
 ---
 
+[0.1.1]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.1
 [0.1.0]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.0
