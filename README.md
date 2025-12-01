@@ -179,6 +179,51 @@ end
 
 **Note**: This module requires automation permission for System Events. macOS may prompt for permission on first use.
 
+### Finder Automation
+
+Control the macOS Finder application:
+
+```elixir
+# Get selected files in Finder
+{:ok, files} = ExMacOSControl.Finder.get_selection()
+# => {:ok, ["/Users/me/file.txt", "/Users/me/file2.txt"]}
+
+# Empty selection returns empty list
+{:ok, []} = ExMacOSControl.Finder.get_selection()
+# => {:ok, []}
+
+# Open Finder at a location
+:ok = ExMacOSControl.Finder.open_location("/Users/me/Documents")
+# => :ok
+
+# Create new Finder window
+:ok = ExMacOSControl.Finder.new_window("/Applications")
+# => :ok
+
+# Get current folder path
+{:ok, path} = ExMacOSControl.Finder.get_current_folder()
+# => {:ok, "/Users/me/Documents"}
+
+# Returns empty string if no Finder windows open
+{:ok, ""} = ExMacOSControl.Finder.get_current_folder()
+# => {:ok, ""}
+
+# Set view mode
+:ok = ExMacOSControl.Finder.set_view(:icon)    # Icon view
+:ok = ExMacOSControl.Finder.set_view(:list)    # List view
+:ok = ExMacOSControl.Finder.set_view(:column)  # Column view
+:ok = ExMacOSControl.Finder.set_view(:gallery) # Gallery view
+
+# Error handling
+{:error, error} = ExMacOSControl.Finder.open_location("/nonexistent/path")
+# => {:error, %ExMacOSControl.Error{...}}
+
+{:error, error} = ExMacOSControl.Finder.set_view(:invalid)
+# => {:error, %ExMacOSControl.Error{type: :execution_error, message: "Invalid view mode", ...}}
+```
+
+**Note**: This module requires automation permission for Finder. macOS may prompt for permission on first use.
+
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
