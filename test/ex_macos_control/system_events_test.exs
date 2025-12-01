@@ -471,4 +471,182 @@ defmodule ExMacOSControl.SystemEventsTest do
                SystemEvents.set_window_bounds("Safari", position: [100, 100], size: [400, 500])
     end
   end
+
+  describe "reveal_in_finder/1" do
+    test "reveals file in Finder successfully" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(tell application "Finder")
+        assert script =~ ~s(POSIX file "/Users/test/file.txt")
+        assert script =~ "reveal"
+        assert script =~ "activate"
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.reveal_in_finder("/Users/test/file.txt")
+    end
+
+    test "reveals folder in Finder successfully" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(POSIX file "/Users/test/folder")
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.reveal_in_finder("/Users/test/folder")
+    end
+
+    test "handles nonexistent path" do
+      error = Error.not_found("File not found", path: "/nonexistent/path")
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, error}
+      end)
+
+      assert {:error, ^error} = SystemEvents.reveal_in_finder("/nonexistent/path")
+    end
+
+    test "validates absolute path" do
+      assert {:error, error} = SystemEvents.reveal_in_finder("relative/path")
+      assert error.type == :execution_error
+      assert error.message =~ "Path must be absolute"
+    end
+
+    test "handles Finder errors" do
+      error = Error.execution_error("Finder error")
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, error}
+      end)
+
+      assert {:error, ^error} = SystemEvents.reveal_in_finder("/Users/test/file.txt")
+    end
+
+    test "escapes special characters in path" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(POSIX file "/Users/test/file\\"name.txt")
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.reveal_in_finder("/Users/test/file\"name.txt")
+    end
+  end
+
+  describe "get_selected_finder_items/0" do
+    test "returns list of selected items" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(tell application "Finder")
+        assert script =~ "selection"
+        assert script =~ "POSIX path"
+        {:ok, "/Users/test/file1.txt, /Users/test/file2.txt"}
+      end)
+
+      assert {:ok, items} = SystemEvents.get_selected_finder_items()
+      assert items == ["/Users/test/file1.txt", "/Users/test/file2.txt"]
+    end
+
+    test "returns empty list when nothing selected" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:ok, ""}
+      end)
+
+      assert {:ok, []} = SystemEvents.get_selected_finder_items()
+    end
+
+    test "handles Finder not running" do
+      error = Error.execution_error("Finder is not running")
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, error}
+      end)
+
+      assert {:error, ^error} = SystemEvents.get_selected_finder_items()
+    end
+
+    test "parses multiple paths correctly" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:ok, "/Users/test/a.txt, /Users/test/b.txt, /Users/test/c.txt"}
+      end)
+
+      assert {:ok, items} = SystemEvents.get_selected_finder_items()
+      assert length(items) == 3
+      assert "/Users/test/a.txt" in items
+      assert "/Users/test/b.txt" in items
+      assert "/Users/test/c.txt" in items
+    end
+
+    test "handles single selected item" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:ok, "/Users/test/single.txt"}
+      end)
+
+      assert {:ok, items} = SystemEvents.get_selected_finder_items()
+      assert items == ["/Users/test/single.txt"]
+    end
+
+    test "trims whitespace from paths" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:ok, " /Users/test/file1.txt , /Users/test/file2.txt "}
+      end)
+
+      assert {:ok, items} = SystemEvents.get_selected_finder_items()
+      assert items == ["/Users/test/file1.txt", "/Users/test/file2.txt"]
+    end
+  end
+
+  describe "trash_file/1" do
+    test "moves file to trash successfully" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(tell application "Finder")
+        assert script =~ ~s(POSIX file "/Users/test/file.txt")
+        assert script =~ "move"
+        assert script =~ "to trash"
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.trash_file("/Users/test/file.txt")
+    end
+
+    test "moves folder to trash successfully" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(POSIX file "/Users/test/folder")
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.trash_file("/Users/test/folder")
+    end
+
+    test "handles nonexistent file" do
+      error = Error.not_found("File not found", path: "/nonexistent/file")
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, error}
+      end)
+
+      assert {:error, ^error} = SystemEvents.trash_file("/nonexistent/file")
+    end
+
+    test "validates absolute path" do
+      assert {:error, error} = SystemEvents.trash_file("relative/path")
+      assert error.type == :execution_error
+      assert error.message =~ "Path must be absolute"
+    end
+
+    test "handles permission errors" do
+      error = Error.permission_denied("Cannot move file to trash", path: "/protected/file")
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, error}
+      end)
+
+      assert {:error, ^error} = SystemEvents.trash_file("/protected/file")
+    end
+
+    test "escapes special characters in path" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~s(POSIX file "/Users/test/file\\"name.txt")
+        {:ok, ""}
+      end)
+
+      assert :ok = SystemEvents.trash_file("/Users/test/file\"name.txt")
+    end
+  end
 end

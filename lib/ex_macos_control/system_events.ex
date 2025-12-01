@@ -2,11 +2,11 @@ defmodule ExMacOSControl.SystemEvents do
   @moduledoc """
   Automation helpers for macOS System Events.
 
-  Provides process management and UI automation capabilities including listing,
-  launching, quitting processes, menu clicking, keystroke simulation, and window
-  management.
+  Provides process management, UI automation, and file operation capabilities including listing,
+  launching, quitting processes, menu clicking, keystroke simulation, window management,
+  and Finder integration.
 
-  This module is a thin wrapper over AppleScript calls to System Events, providing
+  This module is a thin wrapper over AppleScript calls to System Events and Finder, providing
   a convenient Elixir API for common automation tasks.
 
   ## Permissions
@@ -26,9 +26,11 @@ defmodule ExMacOSControl.SystemEvents do
 
   Add Terminal (or your Elixir runtime) to the list of allowed applications.
 
+  **File Operations**: Requires Finder access (usually granted automatically).
+
   ## Examples
 
-      # Process management (from A1)
+      # Process management (A1)
       {:ok, processes} = ExMacOSControl.SystemEvents.list_processes()
       # => {:ok, ["Safari", "Finder", "Terminal", ...]}
 
@@ -53,14 +55,23 @@ defmodule ExMacOSControl.SystemEvents do
         size: [400, 500]
       )
 
+      # File operations (A3)
+      :ok = ExMacOSControl.SystemEvents.reveal_in_finder("/Users/me/file.txt")
+
+      {:ok, selected} = ExMacOSControl.SystemEvents.get_selected_finder_items()
+      # => {:ok, ["/Users/me/file1.txt", "/Users/me/file2.txt"]}
+
+      :ok = ExMacOSControl.SystemEvents.trash_file("/Users/me/old_file.txt")
+
   ## Notes
 
-  - All functions delegate to AppleScript via System Events
+  - All functions delegate to AppleScript via System Events or Finder
   - Applications may prompt for quit confirmation dialogs
   - Some applications (like Finder) cannot be quit via normal methods
   - Application names are case-sensitive
   - `launch_application/1` will bring an already-running app to the front
   - UI automation functions require Accessibility permissions
+  - File operation paths must be absolute (start with `/`)
   """
 
   alias ExMacOSControl.Error
@@ -570,6 +581,164 @@ defmodule ExMacOSControl.SystemEvents do
     end
   end
 
+  @doc """
+  Reveals a file or folder in Finder.
+
+  Opens a Finder window at the parent directory and selects the specified item.
+  Finder is brought to the front.
+
+  ## Parameters
+
+    * `path` - Absolute POSIX path to file or folder (must start with `/`)
+
+  ## Returns
+
+    * `:ok` - File successfully revealed in Finder
+    * `{:error, error}` - Path doesn't exist, path is not absolute, or Finder error
+
+  ## Examples
+
+      iex> ExMacOSControl.SystemEvents.reveal_in_finder("/Users/me/Documents/file.txt")
+      :ok
+
+      iex> ExMacOSControl.SystemEvents.reveal_in_finder("/nonexistent/path")
+      {:error, %ExMacOSControl.Error{type: :not_found, ...}}
+
+      iex> ExMacOSControl.SystemEvents.reveal_in_finder("relative/path")
+      {:error, %ExMacOSControl.Error{type: :execution_error, message: "Path must be absolute", ...}}
+
+  ## Notes
+
+    * Path must be absolute (start with `/`)
+    * This will open a Finder window and bring Finder to the front
+    * If Finder is not running, it will be launched automatically
+  """
+  @spec reveal_in_finder(String.t()) :: :ok | {:error, Error.t()}
+  def reveal_in_finder(path) do
+    with :ok <- validate_absolute_path(path) do
+      script = """
+      tell application "Finder"
+        reveal POSIX file "#{escape_quotes(path)}"
+        activate
+      end tell
+      """
+
+      case adapter().run_applescript(script) do
+        {:ok, _output} ->
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Gets the list of currently selected items in Finder.
+
+  Returns the POSIX paths of all items currently selected in the frontmost
+  Finder window.
+
+  ## Returns
+
+    * `{:ok, paths}` - List of POSIX paths (empty list if nothing selected)
+    * `{:error, error}` - If Finder is not available or another error occurs
+
+  ## Examples
+
+      iex> ExMacOSControl.SystemEvents.get_selected_finder_items()
+      {:ok, ["/Users/me/file1.txt", "/Users/me/file2.txt"]}
+
+      iex> ExMacOSControl.SystemEvents.get_selected_finder_items()
+      {:ok, []}
+
+  ## Notes
+
+    * Returns an empty list if no items are selected
+    * All returned paths are absolute POSIX paths
+    * If Finder is not running, an error will be returned
+  """
+  @spec get_selected_finder_items() :: {:ok, [String.t()]} | {:error, Error.t()}
+  def get_selected_finder_items do
+    script = """
+    tell application "Finder"
+      set selectedItems to selection
+      set itemPaths to {}
+      repeat with anItem in selectedItems
+        set end of itemPaths to POSIX path of (anItem as alias)
+      end repeat
+      return itemPaths
+    end tell
+    """
+
+    case adapter().run_applescript(script) do
+      {:ok, output} ->
+        paths = parse_path_list(output)
+        {:ok, paths}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Moves a file or folder to the Trash.
+
+  This operation moves the specified file or folder to the macOS Trash.
+  The item can be restored from the Trash if needed.
+
+  ## Parameters
+
+    * `path` - Absolute POSIX path to file or folder (must start with `/`)
+
+  ## Returns
+
+    * `:ok` - Item successfully moved to Trash
+    * `{:error, error}` - Path doesn't exist, path is not absolute, permission denied, or Finder error
+
+  ## Examples
+
+      iex> ExMacOSControl.SystemEvents.trash_file("/Users/me/old_file.txt")
+      :ok
+
+      iex> ExMacOSControl.SystemEvents.trash_file("/nonexistent/file")
+      {:error, %ExMacOSControl.Error{type: :not_found, ...}}
+
+      iex> ExMacOSControl.SystemEvents.trash_file("relative/path")
+      {:error, %ExMacOSControl.Error{type: :execution_error, message: "Path must be absolute", ...}}
+
+  ## Notes
+
+    * Path must be absolute (start with `/`)
+    * The item is moved to Trash, not permanently deleted
+    * Items can be restored from Trash manually
+    * Permission errors may occur for protected files
+    * If Finder is not running, it will be launched automatically
+
+  ## Warning
+
+  While items are moved to Trash (not permanently deleted), this operation
+  should still be used with caution. Always verify the path before calling.
+  """
+  @spec trash_file(String.t()) :: :ok | {:error, Error.t()}
+  def trash_file(path) do
+    with :ok <- validate_absolute_path(path) do
+      script = """
+      tell application "Finder"
+        move POSIX file "#{escape_quotes(path)}" to trash
+      end tell
+      """
+
+      case adapter().run_applescript(script) do
+        {:ok, _output} ->
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
   ## Private Helpers
 
   # Parses a comma-separated list of processes from AppleScript output
@@ -660,5 +829,28 @@ defmodule ExMacOSControl.SystemEvents do
 
   defp validate_size(_) do
     {:error, Error.execution_error("Invalid size format, expected [width, height]")}
+  end
+
+  # Validates that a path is absolute (starts with "/")
+  @spec validate_absolute_path(String.t()) :: :ok | {:error, Error.t()}
+  defp validate_absolute_path(path) when is_binary(path) do
+    if String.starts_with?(path, "/") do
+      :ok
+    else
+      {:error, Error.execution_error("Path must be absolute", path: path)}
+    end
+  end
+
+  defp validate_absolute_path(_) do
+    {:error, Error.execution_error("Path must be a string")}
+  end
+
+  # Parses a comma-separated list of paths from AppleScript output
+  @spec parse_path_list(String.t()) :: [String.t()]
+  defp parse_path_list(output) do
+    output
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 end

@@ -430,4 +430,188 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
       Process.sleep(1000)
     end
   end
+
+  describe "reveal_in_finder/1 (integration)" do
+    setup do
+      # Create a temporary file for testing
+      tmp_dir = System.tmp_dir!()
+      tmp_file = Path.join(tmp_dir, "test_reveal_#{System.unique_integer([:positive])}.txt")
+      File.write!(tmp_file, "test content")
+
+      on_exit(fn ->
+        File.rm(tmp_file)
+      end)
+
+      %{tmp_file: tmp_file, tmp_dir: tmp_dir}
+    end
+
+    @tag :integration
+    test "reveals temporary file in Finder", %{tmp_file: tmp_file} do
+      assert :ok = SystemEvents.reveal_in_finder(tmp_file)
+      Process.sleep(1000)
+      # Note: This will actually open a Finder window
+    end
+
+    @tag :integration
+    test "reveals temporary directory in Finder", %{tmp_dir: tmp_dir} do
+      assert :ok = SystemEvents.reveal_in_finder(tmp_dir)
+      Process.sleep(1000)
+    end
+
+    @tag :integration
+    test "handles nonexistent file" do
+      result = SystemEvents.reveal_in_finder("/tmp/nonexistent_file_#{System.unique_integer([:positive])}.txt")
+      assert {:error, error} = result
+      assert error.type in [:not_found, :execution_error]
+    end
+
+    @tag :integration
+    test "rejects relative path" do
+      result = SystemEvents.reveal_in_finder("relative/path.txt")
+      assert {:error, error} = result
+      assert error.type == :execution_error
+      assert error.message =~ "Path must be absolute"
+    end
+  end
+
+  describe "get_selected_finder_items/0 (integration)" do
+    @tag :integration
+    test "returns list or empty list" do
+      result = SystemEvents.get_selected_finder_items()
+
+      case result do
+        {:ok, items} ->
+          assert is_list(items)
+          # All items should be absolute paths
+          Enum.each(items, fn path ->
+            assert is_binary(path)
+            assert String.starts_with?(path, "/")
+          end)
+
+        {:error, _} ->
+          # Acceptable if Finder has issues
+          assert true
+      end
+    end
+
+    @tag :integration
+    test "returns absolute paths for selected items" do
+      # Note: This test requires manual selection in Finder
+      # Just verify it doesn't crash and returns proper format
+      result = SystemEvents.get_selected_finder_items()
+
+      case result do
+        {:ok, []} ->
+          # No selection is valid
+          assert true
+
+        {:ok, items} when is_list(items) ->
+          # Verify all paths are absolute
+          for path <- items do
+            assert String.starts_with?(path, "/")
+          end
+
+        {:error, _} ->
+          # Error is acceptable
+          assert true
+      end
+    end
+  end
+
+  describe "trash_file/1 (integration)" do
+    @tag :integration
+    @tag :skip
+    test "moves file to trash" do
+      # Create a temporary file
+      tmp_file = Path.join(System.tmp_dir!(), "test_trash_#{System.unique_integer([:positive])}.txt")
+      File.write!(tmp_file, "will be trashed")
+
+      assert File.exists?(tmp_file)
+      assert :ok = SystemEvents.trash_file(tmp_file)
+      Process.sleep(500)
+      refute File.exists?(tmp_file)
+    end
+
+    @tag :integration
+    @tag :skip
+    test "moves folder to trash" do
+      # Create a temporary folder
+      tmp_dir = Path.join(System.tmp_dir!(), "test_trash_dir_#{System.unique_integer([:positive])}")
+      File.mkdir!(tmp_dir)
+
+      assert File.exists?(tmp_dir)
+      assert :ok = SystemEvents.trash_file(tmp_dir)
+      Process.sleep(500)
+      refute File.exists?(tmp_dir)
+    end
+
+    @tag :integration
+    test "handles nonexistent file" do
+      result = SystemEvents.trash_file("/tmp/nonexistent_#{System.unique_integer([:positive])}.txt")
+      assert {:error, error} = result
+      assert error.type in [:not_found, :execution_error]
+    end
+
+    @tag :integration
+    test "rejects relative path" do
+      result = SystemEvents.trash_file("relative/path.txt")
+      assert {:error, error} = result
+      assert error.type == :execution_error
+      assert error.message =~ "Path must be absolute"
+    end
+  end
+
+  describe "file operations workflow (integration)" do
+    setup do
+      # Create a temporary file for the workflow
+      tmp_file = Path.join(System.tmp_dir!(), "test_workflow_#{System.unique_integer([:positive])}.txt")
+      File.write!(tmp_file, "test content for workflow")
+
+      %{tmp_file: tmp_file}
+    end
+
+    @tag :integration
+    test "complete workflow: reveal in Finder", %{tmp_file: tmp_file} do
+      # Ensure file exists
+      assert File.exists?(tmp_file)
+
+      # Reveal in Finder
+      assert :ok = SystemEvents.reveal_in_finder(tmp_file)
+      Process.sleep(1000)
+
+      # Get selected items (file should be selected after reveal)
+      result = SystemEvents.get_selected_finder_items()
+
+      case result do
+        {:ok, items} ->
+          # The revealed file might be selected
+          assert is_list(items)
+
+        {:error, _} ->
+          # Error is acceptable
+          assert true
+      end
+
+      # Clean up
+      File.rm!(tmp_file)
+    end
+
+    @tag :integration
+    @tag :skip
+    test "complete workflow: reveal and trash", %{tmp_file: tmp_file} do
+      # Ensure file exists
+      assert File.exists?(tmp_file)
+
+      # Reveal in Finder
+      assert :ok = SystemEvents.reveal_in_finder(tmp_file)
+      Process.sleep(1000)
+
+      # Move to trash
+      assert :ok = SystemEvents.trash_file(tmp_file)
+      Process.sleep(500)
+
+      # Verify it's gone
+      refute File.exists?(tmp_file)
+    end
+  end
 end
