@@ -322,6 +322,166 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   end
 
   @doc """
+  Executes a script file from disk with automatic language detection.
+
+  This function executes AppleScript or JavaScript files directly using osascript,
+  with automatic language detection based on file extension. It supports all the
+  same options as `run_applescript/2` and `run_javascript/2`, including timeout
+  and argument passing.
+
+  ## Parameters
+
+    * `file_path` - Absolute or relative path to the script file
+    * `opts` - Keyword list of options:
+      * `:language` - Explicit language (`:applescript` or `:javascript`), overrides detection
+      * `:timeout` - Maximum time in milliseconds to wait for execution
+      * `:args` - List of string arguments to pass to the script
+
+  ## Language Detection
+
+  The language is automatically detected from the file extension:
+
+    * `.scpt`, `.applescript` → AppleScript
+    * `.js`, `.jxa` → JavaScript
+
+  You can override automatic detection using the `:language` option.
+
+  ## File Validation
+
+  The function validates that:
+    * The file exists
+    * The path points to a regular file (not a directory)
+
+  ## Returns
+
+    * `{:ok, output}` - On successful execution with script output
+    * `{:error, error}` - On failure with detailed error information
+
+  ## Examples
+
+      # Execute AppleScript file with auto-detection
+      OSAScriptAdapter.run_script_file("/path/to/script.applescript")
+      # => {:ok, "result"}
+
+      # Execute JavaScript file with auto-detection
+      OSAScriptAdapter.run_script_file("/path/to/script.js")
+      # => {:ok, "result"}
+
+      # Override language detection
+      OSAScriptAdapter.run_script_file("/path/to/script.txt", language: :applescript)
+      # => {:ok, "result"}
+
+      # With arguments
+      OSAScriptAdapter.run_script_file(
+        "/path/to/script.applescript",
+        args: ["arg1", "arg2"]
+      )
+      # => {:ok, "result"}
+
+      # With timeout
+      OSAScriptAdapter.run_script_file("/path/to/script.js", timeout: 5000)
+      # => {:ok, "result"}
+
+      # Combined options
+      OSAScriptAdapter.run_script_file(
+        "/path/to/script.scpt",
+        language: :applescript,
+        args: ["test"],
+        timeout: 10_000
+      )
+      # => {:ok, "result"}
+
+      # File not found
+      OSAScriptAdapter.run_script_file("/nonexistent.scpt")
+      # => {:error, %ExMacOSControl.Error{type: :not_found, ...}}
+
+  """
+  @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
+          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+  @impl true
+  def run_script_file(file_path, opts) when is_list(opts) do
+    with :ok <- validate_file_exists(file_path),
+         {:ok, language} <- determine_language(file_path, opts) do
+      execute_script_file(file_path, language, opts)
+    end
+  end
+
+  # Validates that the file exists and is a regular file
+  defp validate_file_exists(file_path) do
+    cond do
+      not File.exists?(file_path) ->
+        {:error, Error.not_found("Script file not found", file: file_path)}
+
+      not File.regular?(file_path) ->
+        {:error, Error.not_found("Path is not a regular file", file: file_path)}
+
+      true ->
+        :ok
+    end
+  end
+
+  # Detects the language from file extension
+  defp detect_language(file_path) do
+    case Path.extname(file_path) |> String.downcase() do
+      ext when ext in [".scpt", ".applescript"] -> :applescript
+      ext when ext in [".js", ".jxa"] -> :javascript
+      _ -> nil
+    end
+  end
+
+  # Determines the language to use, preferring explicit option over detection
+  defp determine_language(file_path, opts) do
+    case Keyword.get(opts, :language) do
+      nil ->
+        case detect_language(file_path) do
+          nil ->
+            {:error,
+             Error.execution_error(
+               "Unknown file extension. Use :language option to specify :applescript or :javascript",
+               file: file_path
+             )}
+
+          lang ->
+            {:ok, lang}
+        end
+
+      lang when lang in [:applescript, :javascript] ->
+        {:ok, lang}
+
+      invalid ->
+        {:error,
+         Error.execution_error("Invalid language option: #{inspect(invalid)}. Must be :applescript or :javascript")}
+    end
+  end
+
+  # Executes the script file using osascript
+  defp execute_script_file(file_path, language, opts) do
+    timeout = Keyword.get(opts, :timeout)
+    args = Keyword.get(opts, :args, [])
+
+    # Build command arguments based on language
+    cmd_args = build_command_args(language, file_path, args)
+
+    # Execute with or without timeout
+    if timeout do
+      run_with_timeout("osascript", cmd_args, timeout)
+    else
+      run_without_timeout("osascript", cmd_args)
+    end
+  end
+
+  # Builds osascript command arguments for the given language
+  defp build_command_args(:applescript, file_path, args) do
+    # osascript file_path [args...]
+    [file_path | args]
+  end
+
+  defp build_command_args(:javascript, file_path, args) do
+    # osascript -l JavaScript file_path [args...]
+    ["-l", "JavaScript", file_path | args]
+  end
+
+  @doc """
   Executes a macOS Shortcut by name.
 
   Uses AppleScript to run the shortcut via Shortcuts Events.

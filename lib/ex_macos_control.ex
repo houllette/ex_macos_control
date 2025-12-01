@@ -5,6 +5,7 @@ defmodule ExMacOSControl do
   This module provides a high-level interface for automating macOS using:
   - AppleScript - Apple's scripting language for macOS automation
   - JXA (JavaScript for Automation) - JavaScript-based alternative to AppleScript
+  - Script Files - Execute AppleScript and JXA files from disk with automatic language detection
   - Shortcuts - Execute macOS Shortcuts
 
   ## Examples
@@ -25,6 +26,13 @@ defmodule ExMacOSControl do
       # Execute JXA with arguments
       iex> ExMacOSControl.run_javascript("function run(argv) { return argv[0]; }", args: ["test"])
       {:ok, "test"}
+
+      # Execute script files with automatic language detection
+      # ExMacOSControl.run_script_file("/path/to/script.applescript")
+      # => {:ok, "result"}
+
+      # ExMacOSControl.run_script_file("/path/to/script.js", args: ["arg1", "arg2"])
+      # => {:ok, "result"}
 
   """
 
@@ -144,6 +152,103 @@ defmodule ExMacOSControl do
   @spec run_javascript(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, String.t()} | {:error, term()}
   def run_javascript(script, opts), do: @adapter.run_javascript(script, opts)
+
+  @doc """
+  Executes a script file from disk with automatic language detection.
+
+  This function executes AppleScript or JavaScript files directly, with automatic
+  language detection based on file extension. It supports all the same options as
+  `run_applescript/2` and `run_javascript/2`, including timeout and argument passing.
+
+  ## Parameters
+
+  - `file_path` - Absolute or relative path to the script file
+
+  ## Language Detection
+
+  The language is automatically detected from the file extension:
+
+    * `.scpt`, `.applescript` → AppleScript
+    * `.js`, `.jxa` → JavaScript
+
+  ## Returns
+
+  - `{:ok, output}` - Success with script output
+  - `{:error, reason}` - Failure with error reason
+
+  ## Examples
+
+      # Execute AppleScript file
+      ExMacOSControl.run_script_file("/path/to/script.applescript")
+      # => {:ok, "result"}
+
+      # Execute JavaScript file
+      ExMacOSControl.run_script_file("/path/to/script.js")
+      # => {:ok, "result"}
+
+  """
+  @spec run_script_file(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+  def run_script_file(file_path), do: @adapter.run_script_file(file_path, [])
+
+  @doc """
+  Executes a script file from disk with options.
+
+  This function executes AppleScript or JavaScript files directly, with automatic
+  language detection based on file extension. You can override the language detection
+  and pass arguments and timeout options.
+
+  ## Parameters
+
+  - `file_path` - Absolute or relative path to the script file
+  - `opts` - Keyword list of options:
+    - `:language` - Explicit language (`:applescript` or `:javascript`), overrides detection
+    - `:timeout` - Maximum time in milliseconds to wait for execution
+    - `:args` - List of string arguments to pass to the script
+
+  ## Language Detection
+
+  The language is automatically detected from the file extension:
+
+    * `.scpt`, `.applescript` → AppleScript
+    * `.js`, `.jxa` → JavaScript
+
+  You can override automatic detection using the `:language` option.
+
+  ## Returns
+
+  - `{:ok, output}` - Success with script output
+  - `{:error, reason}` - Failure with error reason
+
+  ## Examples
+
+      # Override language detection
+      ExMacOSControl.run_script_file("/path/to/script.txt", language: :applescript)
+      # => {:ok, "result"}
+
+      # With arguments
+      ExMacOSControl.run_script_file(
+        "/path/to/script.applescript",
+        args: ["arg1", "arg2"]
+      )
+      # => {:ok, "result"}
+
+      # With timeout
+      ExMacOSControl.run_script_file("/path/to/script.js", timeout: 5000)
+      # => {:ok, "result"}
+
+      # Combined options
+      ExMacOSControl.run_script_file(
+        "/path/to/script.scpt",
+        language: :applescript,
+        args: ["test"],
+        timeout: 10_000
+      )
+      # => {:ok, "result"}
+
+  """
+  @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
+          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+  def run_script_file(file_path, opts), do: @adapter.run_script_file(file_path, opts)
 
   @doc """
   Executes a macOS Shortcut by name.
