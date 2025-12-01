@@ -6,7 +6,7 @@ defmodule ExMacOSControl do
   - AppleScript - Apple's scripting language for macOS automation
   - JXA (JavaScript for Automation) - JavaScript-based alternative to AppleScript
   - Script Files - Execute AppleScript and JXA files from disk with automatic language detection
-  - Shortcuts - Execute macOS Shortcuts
+  - Shortcuts - Execute and list macOS Shortcuts with input parameter support
 
   ## Examples
 
@@ -27,12 +27,28 @@ defmodule ExMacOSControl do
       iex> ExMacOSControl.run_javascript("function run(argv) { return argv[0]; }", args: ["test"])
       {:ok, "test"}
 
+  ## Script Files
+
       # Execute script files with automatic language detection
-      # ExMacOSControl.run_script_file("/path/to/script.applescript")
+      ExMacOSControl.run_script_file("/path/to/script.applescript")
       # => {:ok, "result"}
 
-      # ExMacOSControl.run_script_file("/path/to/script.js", args: ["arg1", "arg2"])
+      ExMacOSControl.run_script_file("/path/to/script.js", args: ["arg1", "arg2"])
       # => {:ok, "result"}
+
+  ## Shortcuts
+
+      # Run a Shortcut
+      ExMacOSControl.run_shortcut("My Shortcut")
+      # => :ok
+
+      # Run a Shortcut with input
+      ExMacOSControl.run_shortcut("Process Text", input: "Hello, World!")
+      # => {:ok, "processed result"}
+
+      # List available Shortcuts
+      ExMacOSControl.list_shortcuts()
+      # => {:ok, ["Shortcut 1", "Shortcut 2", "My Shortcut"]}
 
   """
 
@@ -259,16 +275,84 @@ defmodule ExMacOSControl do
 
   ## Returns
 
-  - `:ok` - Success
+  - `:ok` - Success with no output
+  - `{:ok, output}` - Success with output from the shortcut
   - `{:error, reason}` - Failure with error reason
 
   ## Examples
 
       # Assuming you have a shortcut named "My Shortcut"
       ExMacOSControl.run_shortcut("My Shortcut")
-      # => :ok (if shortcut exists) or {:error, reason} (if not found)
+      # => :ok (if shortcut exists and returns no output)
+      # => {:ok, "result"} (if shortcut returns output)
+      # => {:error, reason} (if not found)
 
   """
-  @spec run_shortcut(String.t()) :: :ok | {:error, term()}
+  @spec run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
   def run_shortcut(name), do: @adapter.run_shortcut(name)
+
+  @doc """
+  Executes a macOS Shortcut by name with input parameters.
+
+  ## Parameters
+
+  - `name` - The name of the Shortcut to run
+  - `opts` - Keyword list of options:
+    - `:input` - Input data to pass to the shortcut (string, number, map, or list)
+
+  ## Returns
+
+  - `:ok` - Success with no output
+  - `{:ok, output}` - Success with output from the shortcut
+  - `{:error, reason}` - Failure with error reason
+
+  ## Examples
+
+      # With string input
+      ExMacOSControl.run_shortcut("Process Text", input: "Hello, World!")
+      # => {:ok, "processed result"}
+
+      # With number input
+      ExMacOSControl.run_shortcut("Calculate", input: 42)
+      # => {:ok, "84"}
+
+      # With map input (serialized as JSON)
+      ExMacOSControl.run_shortcut("Process Data", input: %{"name" => "John", "age" => 30})
+      # => {:ok, "result"}
+
+      # With list input (serialized as JSON)
+      ExMacOSControl.run_shortcut("Process Items", input: ["item1", "item2", "item3"])
+      # => {:ok, "result"}
+
+  """
+  @spec run_shortcut(String.t(), ExMacOSControl.Adapter.options()) ::
+          :ok | {:ok, String.t()} | {:error, term()}
+  def run_shortcut(name, opts), do: @adapter.run_shortcut(name, opts)
+
+  @doc """
+  Lists all available macOS Shortcuts.
+
+  ## Returns
+
+  - `{:ok, shortcuts}` - Success with list of shortcut names
+  - `{:error, reason}` - Failure (e.g., Shortcuts app not available)
+
+  ## Examples
+
+      ExMacOSControl.list_shortcuts()
+      # => {:ok, ["Shortcut 1", "Shortcut 2", "My Shortcut"]}
+
+      # Check if a specific shortcut exists
+      case ExMacOSControl.list_shortcuts() do
+        {:ok, shortcuts} ->
+          if "My Shortcut" in shortcuts do
+            ExMacOSControl.run_shortcut("My Shortcut")
+          end
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+  """
+  @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
+  def list_shortcuts, do: @adapter.list_shortcuts()
 end

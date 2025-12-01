@@ -482,7 +482,10 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   end
 
   @doc """
-  Executes a macOS Shortcut by name.
+  Executes a macOS Shortcut by name without options.
+
+  This is a convenience function that delegates to `run_shortcut/2`
+  with an empty options list, maintaining backward compatibility.
 
   Uses AppleScript to run the shortcut via Shortcuts Events.
 
@@ -492,24 +495,158 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   ## Returns
 
-  - `:ok` - Success
+  - `:ok` - Success with no output
+  - `{:ok, output}` - Success with output from the shortcut
   - `{:error, error}` - Failure with error reason
 
   ## Examples
 
       OSAScriptAdapter.run_shortcut("My Shortcut")
-      # => :ok (if shortcut exists)
+      # => :ok (if shortcut exists and returns no output)
+      # => {:ok, "result"} (if shortcut returns output)
       # => {:error, error} (if not found or error occurs)
 
   """
-  @spec run_shortcut(String.t()) :: :ok | {:error, term()}
+  @spec run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
   @impl true
   def run_shortcut(name) do
-    script = ~s(tell application "Shortcuts Events" to run shortcut "#{name}")
+    run_shortcut(name, [])
+  end
+
+  @doc """
+  Executes a macOS Shortcut by name with input parameters.
+
+  Uses AppleScript to run the shortcut via Shortcuts Events. Supports passing
+  input data to the shortcut, which can be a string, number, map, or list.
+
+  ## Parameters
+
+  - `name` - The name of the Shortcut to run
+  - `opts` - Keyword list of options:
+    - `:input` - Input data to pass to the shortcut (string, number, map, or list)
+
+  ## Returns
+
+  - `:ok` - Success with no output
+  - `{:ok, output}` - Success with output from the shortcut
+  - `{:error, error}` - Failure with error reason
+
+  ## Input Types
+
+  The `:input` option supports various data types:
+
+  - **String**: Passed directly as text
+  - **Number**: Passed as a numeric value
+  - **Map**: Serialized to JSON and passed as text
+  - **List**: Serialized to JSON and passed as text
+
+  ## Examples
+
+      # Without input
+      OSAScriptAdapter.run_shortcut("My Shortcut")
+      # => :ok
+
+      # With string input
+      OSAScriptAdapter.run_shortcut("Process Text", input: "Hello, World!")
+      # => {:ok, "processed result"}
+
+      # With number input
+      OSAScriptAdapter.run_shortcut("Calculate", input: 42)
+      # => {:ok, "84"}
+
+      # With map input (serialized as JSON)
+      OSAScriptAdapter.run_shortcut("Process Data", input: %{"name" => "John", "age" => 30})
+      # => {:ok, "result"}
+
+      # With list input (serialized as JSON)
+      OSAScriptAdapter.run_shortcut("Process Items", input: ["item1", "item2", "item3"])
+      # => {:ok, "result"}
+
+  """
+  @spec run_shortcut(String.t(), ExMacOSControl.Adapter.options()) ::
+          :ok | {:ok, String.t()} | {:error, term()}
+  @impl true
+  def run_shortcut(name, opts) when is_list(opts) do
+    input = Keyword.get(opts, :input)
+
+    script =
+      if input do
+        serialized = serialize_shortcut_input(input)
+        ~s(tell application "Shortcuts Events" to run shortcut "#{name}" with input #{serialized})
+      else
+        ~s(tell application "Shortcuts Events" to run shortcut "#{name}")
+      end
 
     case run_applescript(script) do
-      {:ok, _} -> :ok
+      {:ok, ""} -> :ok
+      {:ok, output} -> {:ok, output}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  @doc """
+  Lists all available macOS Shortcuts.
+
+  Uses AppleScript to query the Shortcuts app for all shortcuts.
+
+  ## Returns
+
+  - `{:ok, shortcuts}` - Success with list of shortcut names
+  - `{:error, error}` - Failure (e.g., Shortcuts app not available)
+
+  ## Examples
+
+      OSAScriptAdapter.list_shortcuts()
+      # => {:ok, ["Shortcut 1", "Shortcut 2", "My Shortcut"]}
+
+      # If Shortcuts app is not available
+      # => {:error, error}
+
+  """
+  @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
+  @impl true
+  def list_shortcuts do
+    script = ~s(tell application "Shortcuts Events" to return name of every shortcut)
+
+    case run_applescript(script) do
+      {:ok, output} ->
+        # Parse comma-separated list from AppleScript
+        shortcuts =
+          output
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+
+        {:ok, shortcuts}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Private function to serialize input for shortcut execution
+  defp serialize_shortcut_input(input) when is_binary(input) do
+    # Escape double quotes in the string and wrap in quotes
+    escaped = String.replace(input, "\"", "\\\"")
+    ~s("#{escaped}")
+  end
+
+  defp serialize_shortcut_input(input) when is_number(input) do
+    # Numbers can be passed directly
+    to_string(input)
+  end
+
+  defp serialize_shortcut_input(input) when is_map(input) do
+    # Convert map to JSON and pass as quoted string
+    json = Jason.encode!(input)
+    escaped = String.replace(json, "\"", "\\\"")
+    ~s("#{escaped}")
+  end
+
+  defp serialize_shortcut_input(input) when is_list(input) do
+    # Convert list to JSON and pass as quoted string
+    json = Jason.encode!(input)
+    escaped = String.replace(json, "\"", "\\\"")
+    ~s("#{escaped}")
   end
 end

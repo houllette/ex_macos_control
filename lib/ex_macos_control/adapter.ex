@@ -15,6 +15,7 @@ defmodule ExMacOSControl.Adapter do
           {:timeout, pos_integer()}
           | {:args, [String.t()]}
           | {:language, :applescript | :javascript}
+          | {:input, String.t() | number() | map() | list()}
 
   @type options :: [option()]
 
@@ -23,5 +24,7 @@ defmodule ExMacOSControl.Adapter do
   @callback run_javascript(String.t()) :: {:ok, String.t()} | {:error, term()}
   @callback run_javascript(String.t(), options()) :: {:ok, String.t()} | {:error, term()}
   @callback run_script_file(String.t(), options()) :: {:ok, String.t()} | {:error, term()}
-  @callback run_shortcut(String.t()) :: :ok | {:error, term()}
+  @callback run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
+  @callback run_shortcut(String.t(), options()) :: :ok | {:ok, String.t()} | {:error, term()}
+  @callback list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
 end

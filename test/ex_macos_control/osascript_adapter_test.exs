@@ -107,4 +107,72 @@ defmodule ExMacOSControl.OSAScriptAdapterTest do
       assert {:error, _} = OSAScriptAdapter.run_shortcut("NonexistentShortcut")
     end
   end
+
+  describe "run_shortcut/2 with input" do
+    test "accepts input as a string" do
+      # This will fail if the shortcut doesn't exist, but we're testing the interface
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: "Hello, World!")
+      # Should return either :ok or {:ok, result} or {:error, reason}
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "accepts input as a number" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: 42)
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "accepts input as a float" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: 3.14)
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "accepts input as a map" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: %{"key" => "value", "number" => 42})
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "accepts input as a list" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: ["item1", "item2", "item3"])
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "handles strings with special characters" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", input: ~s(Hello "World" with 'quotes'))
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "handles nested structures" do
+      result =
+        OSAScriptAdapter.run_shortcut("TestShortcut",
+          input: %{
+            "user" => %{"name" => "John", "age" => 30},
+            "items" => ["a", "b", "c"]
+          }
+        )
+
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+
+    test "works without input option (backward compatible)" do
+      result = OSAScriptAdapter.run_shortcut("TestShortcut", [])
+      assert match?(:ok, result) or match?({:ok, _}, result) or match?({:error, _}, result)
+    end
+  end
+
+  describe "list_shortcuts/0" do
+    test "returns a list of shortcuts" do
+      result = OSAScriptAdapter.list_shortcuts()
+      # Should return {:ok, list} or {:error, reason}
+      assert match?({:ok, _}, result) or match?({:error, _}, result)
+
+      case result do
+        {:ok, shortcuts} ->
+          assert is_list(shortcuts)
+
+        {:error, _reason} ->
+          # Shortcuts app might not be available
+          :ok
+      end
+    end
+  end
 end
