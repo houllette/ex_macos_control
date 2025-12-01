@@ -291,34 +291,121 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     run_without_timeout("osascript", cmd_args)
   end
 
+  # Extracts the script content from osascript arguments
+  # Args format: ["-e", script, ...] or ["-l", "JavaScript", "-e", script, ...] or [file_path, ...]
+  defp extract_script_from_args(args) do
+    case args do
+      ["-e", script | _] -> script
+      ["-l", "JavaScript", "-e", script | _] -> script
+      [file_path | _] when is_binary(file_path) -> Path.basename(file_path)
+      _ -> ""
+    end
+  end
+
   # Private function to run command with timeout using Task
   defp run_with_timeout(cmd, args, timeout) do
+    script = extract_script_from_args(args)
+
+    metadata = %{
+      command: cmd,
+      script: String.slice(script, 0, 100),
+      timeout: timeout
+    }
+
+    measurements = %{
+      script_length: String.length(script)
+    }
+
+    start_time = System.monotonic_time()
+    :telemetry.execute([:ex_macos_control, :applescript, :start], measurements, metadata)
+
     task =
       Task.async(fn ->
         System.cmd(cmd, args, stderr_to_stdout: true)
       end)
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {output, 0}} ->
-        {:ok, String.trim(output)}
+    result =
+      case Task.yield(task, timeout) || Task.shutdown(task) do
+        {:ok, {output, 0}} ->
+          {:ok, String.trim(output)}
 
-      {:ok, {stderr, exit_code}} ->
-        {:error, Error.parse_osascript_error(stderr, exit_code)}
+        {:ok, {stderr, exit_code}} ->
+          {:error, Error.parse_osascript_error(stderr, exit_code)}
 
-      nil ->
-        {:error, Error.timeout("Script execution", timeout: timeout)}
+        nil ->
+          {:error, Error.timeout("Script execution", timeout: timeout)}
+      end
+
+    end_time = System.monotonic_time()
+    duration = System.convert_time_unit(end_time - start_time, :native, :microsecond)
+
+    case result do
+      {:ok, output} ->
+        measurements_with_duration = Map.merge(measurements, %{duration: duration})
+        metadata_with_result = Map.merge(metadata, %{result_type: :success, output_length: String.length(output)})
+        :telemetry.execute([:ex_macos_control, :applescript, :stop], measurements_with_duration, metadata_with_result)
+
+      {:error, error} ->
+        measurements_with_duration = Map.merge(measurements, %{duration: duration})
+        metadata_with_error = Map.merge(metadata, %{error: error, result_type: :error})
+
+        :telemetry.execute(
+          [:ex_macos_control, :applescript, :exception],
+          measurements_with_duration,
+          metadata_with_error
+        )
     end
+
+    result
   end
 
   # Private function to run command without timeout
   defp run_without_timeout(cmd, args) do
-    case System.cmd(cmd, args, stderr_to_stdout: true) do
-      {output, 0} ->
-        {:ok, String.trim(output)}
+    script = extract_script_from_args(args)
 
-      {stderr, exit_code} ->
-        {:error, Error.parse_osascript_error(stderr, exit_code)}
+    metadata = %{
+      command: cmd,
+      script: String.slice(script, 0, 100),
+      timeout: nil
+    }
+
+    measurements = %{
+      script_length: String.length(script)
+    }
+
+    start_time = System.monotonic_time()
+    :telemetry.execute([:ex_macos_control, :applescript, :start], measurements, metadata)
+
+    result =
+      case System.cmd(cmd, args, stderr_to_stdout: true) do
+        {output, 0} ->
+          {:ok, String.trim(output)}
+
+        {stderr, exit_code} ->
+          {:error, Error.parse_osascript_error(stderr, exit_code)}
+      end
+
+    end_time = System.monotonic_time()
+    duration = System.convert_time_unit(end_time - start_time, :native, :microsecond)
+
+    case result do
+      {:ok, output} ->
+        measurements_with_duration = Map.merge(measurements, %{duration: duration})
+        metadata_with_result = Map.merge(metadata, %{result_type: :success, output_length: String.length(output)})
+        :telemetry.execute([:ex_macos_control, :applescript, :stop], measurements_with_duration, metadata_with_result)
+
+      {:error, error} ->
+        measurements_with_duration = Map.merge(measurements, %{duration: duration})
+        metadata_with_error = Map.merge(metadata, %{error: error, result_type: :error})
+
+        :telemetry.execute(
+          [:ex_macos_control, :applescript, :exception],
+          measurements_with_duration,
+          metadata_with_error
+        )
     end
+
+    result
   end
 
   @doc """
