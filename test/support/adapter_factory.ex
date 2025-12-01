@@ -26,6 +26,23 @@ defmodule ExMacOSControl.AdapterFactory do
   end
 
   @doc """
+  Sets up a mock adapter to return a successful result for run_applescript/2.
+
+  ## Examples
+
+      test "successful script execution with options" do
+        AdapterFactory.mock_applescript_success_with_opts("Hello, World!")
+        {:ok, result} = ExMacOSControl.run_applescript("return 'test'", timeout: 5000)
+        assert result == "Hello, World!"
+      end
+  """
+  @spec mock_applescript_success_with_opts(String.t()) :: Mox.t()
+  def mock_applescript_success_with_opts(result) do
+    ExMacOSControl.AdapterMock
+    |> expect(:run_applescript, fn _script, _opts -> {:ok, result} end)
+  end
+
+  @doc """
   Sets up a mock adapter to return an error for run_applescript/1.
 
   ## Examples

@@ -11,6 +11,13 @@ defmodule ExMacOSControl.Adapter do
   testing or to support different execution strategies.
   """
 
+  @type option ::
+          {:timeout, pos_integer()}
+          | {:args, [String.t()]}
+
+  @type options :: [option()]
+
   @callback run_applescript(String.t()) :: {:ok, String.t()} | {:error, term()}
+  @callback run_applescript(String.t(), options()) :: {:ok, String.t()} | {:error, term()}
   @callback run_shortcut(String.t()) :: :ok | {:error, term()}
 end

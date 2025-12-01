@@ -1,6 +1,45 @@
 # ExMacosControl
 
-**TODO: Add description**
+An Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA).
+
+## Features
+
+- **AppleScript Execution**: Execute AppleScript code with full control
+  - Timeout support for long-running scripts
+  - Argument passing to scripts
+  - Comprehensive error handling with detailed error messages
+- **macOS Shortcuts**: Run Shortcuts on macOS
+- **Platform Detection**: Automatic macOS platform detection and validation
+- **Test-Friendly**: Adapter pattern with Mox support for easy testing
+
+## Quick Start
+
+```elixir
+# Basic AppleScript execution
+{:ok, result} = ExMacOSControl.run_applescript(~s(return "Hello, World!"))
+# => {:ok, "Hello, World!"}
+
+# With timeout (5 seconds)
+{:ok, result} = ExMacOSControl.run_applescript("delay 2\nreturn \"done\"", timeout: 5000)
+# => {:ok, "done"}
+
+# With arguments
+script = """
+on run argv
+  set name to item 1 of argv
+  return "Hello, " & name
+end run
+"""
+{:ok, result} = ExMacOSControl.run_applescript(script, args: ["World"])
+# => {:ok, "Hello, World"}
+
+# Combined options
+{:ok, result} = ExMacOSControl.run_applescript(script, timeout: 5000, args: ["Elixir"])
+# => {:ok, "Hello, Elixir"}
+
+# Run macOS Shortcuts
+:ok = ExMacOSControl.run_shortcut("My Shortcut Name")
+```
 
 ## Installation
 
