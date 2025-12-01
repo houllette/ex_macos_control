@@ -159,7 +159,10 @@ defmodule ExMacOSControl.RetryTest do
         fn ->
           Agent.update(counter, &(&1 + 1))
           {:error, %{type: :timeout}}
-        end, max_attempts: 3, backoff: :exponential)
+        end,
+        max_attempts: 3,
+        backoff: :exponential
+      )
 
       end_time = System.monotonic_time(:millisecond)
       elapsed = end_time - start_time
@@ -192,7 +195,10 @@ defmodule ExMacOSControl.RetryTest do
         fn ->
           Agent.update(counter, &(&1 + 1))
           {:error, %{type: :timeout}}
-        end, max_attempts: 3, backoff: :linear)
+        end,
+        max_attempts: 3,
+        backoff: :linear
+      )
 
       end_time = System.monotonic_time(:millisecond)
       elapsed = end_time - start_time
@@ -310,7 +316,10 @@ defmodule ExMacOSControl.RetryTest do
           else
             {:ok, "success"}
           end
-        end, max_attempts: 3, backoff: :linear)
+        end,
+        max_attempts: 3,
+        backoff: :linear
+      )
 
       # Start event
       assert_received {:telemetry, [:ex_macos_control, :retry, :start], %{}, %{max_attempts: 3, backoff: :linear}}

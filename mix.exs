@@ -46,14 +46,15 @@ defmodule ExMacosControl.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:telemetry, "~> 1.3"},
-      {:tidewave, "~> 0.5", only: :dev},
-      {:bandit, "~> 1.8", only: :dev},
+      {:telemetry, "~> 1.3", warn_if_outdated: true},
+      {:tidewave, "~> 0.5", only: :dev, warn_if_outdated: true},
+      {:bandit, "~> 1.8", only: :dev, warn_if_outdated: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
-      {:mox, "~> 1.2", only: :test},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:excoveralls, "~> 0.18", only: :test}
+      {:sbom, "~> 0.6", only: :dev, runtime: false, warn_if_outdated: true},
+      {:mox, "~> 1.2", only: :test, warn_if_outdated: true},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false, warn_if_outdated: true},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false, warn_if_outdated: true},
+      {:excoveralls, "~> 0.18", only: :test, warn_if_outdated: true}
     ]
   end
 
@@ -73,7 +74,41 @@ defmodule ExMacosControl.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md"]
+      extras: [
+        "README.md",
+        "CHANGELOG.md",
+        "docs/guides/getting_started.md",
+        "docs/guides/common_patterns.md",
+        "docs/guides/dsl_vs_raw.md",
+        "docs/guides/advanced_usage.md",
+        "docs/performance.md",
+        "docs/creating_app_modules.md"
+      ],
+      groups_for_extras: [
+        Guides: ~r/docs\/guides\/.*/,
+        Reference: ~r/docs\/(performance|creating_app_modules).*/
+      ],
+      groups_for_modules: [
+        Core: [
+          ExMacOSControl,
+          ExMacOSControl.Adapter,
+          ExMacOSControl.OSAScriptAdapter,
+          ExMacOSControl.Error,
+          ExMacOSControl.Platform
+        ],
+        "Advanced Features": [
+          ExMacOSControl.Script,
+          ExMacOSControl.Retry,
+          ExMacOSControl.Permissions
+        ],
+        "App Modules": [
+          ExMacOSControl.SystemEvents,
+          ExMacOSControl.Finder,
+          ExMacOSControl.Safari,
+          ExMacOSControl.Mail,
+          ExMacOSControl.Messages
+        ]
+      ]
     ]
   end
 

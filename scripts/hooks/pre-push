@@ -1,0 +1,75 @@
+#!/bin/bash
+# Pre-push hook for ExMacOSControl
+# Final verification before pushing to remote
+
+set -e  # Exit on first error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo ""
+echo "🚀 Running pre-push checks..."
+echo ""
+
+# 1. Check if mix.lock is up to date
+echo "📦 Verifying mix.lock is up to date..."
+if ! mix deps.get --check-locked 2>/dev/null; then
+  echo -e "${RED}❌ mix.lock is out of date!${NC}"
+  echo -e "${YELLOW}Run 'mix deps.get' to update dependencies${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✅ mix.lock is up to date${NC}"
+echo ""
+
+# 2. Run mix quality (format check, credo, dialyzer)
+echo "🔧 Running mix quality checks..."
+if ! mix quality; then
+  echo -e "${RED}❌ Quality checks failed!${NC}"
+  echo -e "${YELLOW}Fix the issues before pushing${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✅ All quality checks passed${NC}"
+echo ""
+
+# 3. Generate SBOM
+echo "📋 Generating SBOM (Software Bill of Materials)..."
+if ! mix sbom.cyclonedx -d; then
+  echo -e "${RED}❌ SBOM generation failed!${NC}"
+  echo -e "${YELLOW}Check sbom errors above${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✅ SBOM generated successfully${NC}"
+echo ""
+
+# 4. Run tests
+echo "🧪 Running test suite..."
+if ! mix test; then
+  echo -e "${RED}❌ Tests failed!${NC}"
+  echo -e "${YELLOW}Fix failing tests before pushing${NC}"
+  exit 1
+fi
+echo -e "${GREEN}✅ All tests passed${NC}"
+echo ""
+
+# 5. Check for uncommitted SBOM changes
+if [ -f "sbom.cyclonedx.json" ]; then
+  if ! git diff --quiet sbom.cyclonedx.json 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  sbom.cyclonedx.json has uncommitted changes${NC}"
+    echo -e "${YELLOW}Commit the SBOM file before pushing${NC}"
+    exit 1
+  fi
+elif [ -f "priv/sbom.cyclonedx.json" ]; then
+  if ! git diff --quiet priv/sbom.cyclonedx.json 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  priv/sbom.cyclonedx.json has uncommitted changes${NC}"
+    echo -e "${YELLOW}Commit the SBOM file before pushing${NC}"
+    exit 1
+  fi
+fi
+
+echo -e "${GREEN}🎉 All pre-push checks passed! Safe to push.${NC}"
+echo ""
+
+exit 0

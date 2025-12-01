@@ -1,54 +1,93 @@
 # ExMacOSControl
-============
+
+**Control your Mac with Elixir**
 
 [![hex.pm version](https://img.shields.io/hexpm/v/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
 [![hex.pm downloads](https://img.shields.io/hexpm/dt/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
 [![hex.pm license](https://img.shields.io/hexpm/l/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/blob/main/LICENSE)
 [![Last Updated](https://img.shields.io/github/last-commit/houllette/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/commits/master)
 
-An Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA).
+A production-ready Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA). Automate Safari, Finder, Mail, Messages, and more—all with the safety and reliability of Elixir.
+
+## Why ExMacOSControl?
+
+- **🎯 Type-Safe Automation**: Leverage Elixir's type system and pattern matching for robust automation
+- **🧪 Test-Friendly**: Built-in adapter pattern with Mox support makes testing automation code straightforward
+- **⚡ Production-Ready**: Automatic retry logic, telemetry integration, and comprehensive error handling
+- **📦 Batteries Included**: Pre-built modules for Safari, Finder, Mail, Messages, and system control
+- **🔒 Permission Management**: Built-in helpers for checking and requesting macOS permissions
+- **🛠️ Extensible**: Clean patterns and guides for adding your own app modules
+
+## Use Cases
+
+- **Developer Tooling**: Automate your Mac-based development workflow
+- **Testing & QA**: Control Safari for browser testing, automate UI interactions
+- **System Administration**: Manage processes, files, and system settings programmatically
+- **Communication Bots**: Send automated emails and messages
+- **Data Collection**: Extract data from running applications
+- **Productivity Automation**: Build custom workflows combining multiple apps
+
+## Quick Example
+
+Here's a complete workflow combining multiple features:
+
+```elixir
+alias ExMacOSControl, as: Mac
+alias ExMacOSControl.{Safari, Mail, Retry, Permissions}
+
+# Check permissions before starting
+case Permissions.check_automation("Safari") do
+  {:ok, :granted} -> :ok
+  {:ok, :not_granted} ->
+    Permissions.show_automation_help("Safari")
+    raise "Safari automation permission required"
+end
+
+# Scrape data from a website with automatic retry
+{:ok, price} = Retry.with_retry(fn ->
+  # Open URL
+  :ok = Safari.open_url("https://example.com/product")
+  Process.sleep(2000)  # Wait for page load
+
+  # Extract price via JavaScript
+  Safari.execute_javascript(~s|
+    document.querySelector('.price').textContent
+  |)
+end, max_attempts: 3, backoff: :exponential)
+
+# Send email notification if price dropped
+if String.contains?(price, "$99") do
+  :ok = Mail.send_email(
+    to: "me@example.com",
+    subject: "Price Alert!",
+    body: "The product is now #{price}!"
+  )
+
+  IO.puts("✅ Alert sent!")
+end
+```
 
 ## Features
 
-- **AppleScript Execution**: Execute AppleScript code with full control
-  - Timeout support for long-running scripts
-  - Argument passing to scripts
-  - Comprehensive error handling with detailed error messages
-- **JavaScript for Automation (JXA)**: Execute JavaScript-based automation scripts
-  - Full JXA support with timeout and argument passing
-  - Access to ObjC bridge for Objective-C integration
-- **Script File Execution**: Execute scripts from files with automatic language detection
-  - Support for `.applescript`, `.scpt`, `.js`, and `.jxa` file extensions
-  - Explicit language override option
-  - All standard options (timeout, arguments) supported
-- **macOS Shortcuts**: Run Shortcuts on macOS with input parameter support
-  - Pass strings, numbers, maps, and lists as input
-  - List available shortcuts
-- **System Events**: Process management and application control
-  - List running processes
-  - Launch, activate, and quit applications
-  - Check if applications are running
-- **Safari Automation**: Control Safari browser programmatically
-  - Open URLs in new tabs
-  - Get current tab URL
-  - Execute JavaScript in tabs
-  - List all tab URLs
-  - Close tabs by index
-- **Mail Automation**: Control Mail.app for email operations
-  - Send emails with CC and BCC support
-  - Get unread message counts
-  - Search mailboxes by subject
-- **Messages Automation**: Control Messages.app for iMessage and SMS
-  - Send iMessages and SMS programmatically
-  - Retrieve recent messages from chats
-  - List all active chats with unread counts
-  - Get total unread message count
-- **Performance & Reliability**:
-  - Automatic retry logic with exponential/linear backoff
-  - Telemetry events for monitoring and observability
-  - Comprehensive timeout support
-- **Platform Detection**: Automatic macOS platform detection and validation
-- **Test-Friendly**: Adapter pattern with Mox support for easy testing
+### Core Features
+- **AppleScript Execution**: Timeout support, argument passing, comprehensive error handling
+- **JavaScript for Automation (JXA)**: Full JXA support with ObjC bridge access
+- **Script File Execution**: Auto-detect `.applescript`, `.scpt`, `.js`, `.jxa` files
+- **macOS Shortcuts**: Run Shortcuts with input parameters (strings, numbers, maps, lists)
+
+### App Modules
+- **System Events**: Process management, UI automation (menu clicks, keystrokes), file operations
+- **Safari**: Open URLs, execute JavaScript, manage tabs
+- **Finder**: Navigate folders, manage selections, set view modes
+- **Mail**: Send emails (with CC/BCC), search mailboxes, unread counts
+- **Messages**: Send iMessages/SMS, retrieve chats, unread counts
+
+### Advanced Features
+- **Permissions**: Check and manage macOS automation permissions
+- **Retry Logic**: Automatic retry with exponential/linear backoff
+- **Telemetry**: Built-in observability via `:telemetry` events
+- **Script DSL**: Optional Elixir DSL for building AppleScript
+- **Platform Detection**: Automatic macOS validation
 
 ## Quick Start
 
@@ -691,8 +730,7 @@ See [docs/performance.md](docs/performance.md) for comprehensive performance gui
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ex_macos_control` to your list of dependencies in `mix.exs`:
+Add `ex_macos_control` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -702,9 +740,33 @@ def deps do
 end
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/ex_macos_control>.
+Then run:
+
+```bash
+mix deps.get
+```
+
+### Verify Installation
+
+```elixir
+# In iex
+iex> ExMacOSControl.run_applescript(~s(return "Hello!"))
+{:ok, "Hello!"}
+```
+
+If this works, you're ready to automate! 🎉
+
+### System Requirements
+
+- macOS 10.15 (Catalina) or later
+- Elixir 1.19 or later
+- Appropriate macOS permissions (accessibility, automation, etc.)
+
+See the [Permissions section](#checking-and-managing-permissions) for details on required permissions.
+
+## Documentation
+
+Full documentation is available at [https://hexdocs.pm/ex_macos_control](https://hexdocs.pm/ex_macos_control).
 
 ## Development
 
@@ -714,9 +776,14 @@ be found at <https://hexdocs.pm/ex_macos_control>.
 # Install dependencies
 mix deps.get
 
+# Install git hooks (recommended)
+./scripts/install-hooks.sh
+
 # Run tests
 mix test
 ```
+
+**Git Hooks:** This project uses pre-commit and pre-push hooks to ensure code quality. See [docs/git_hooks.md](docs/git_hooks.md) for details.
 
 ### Code Quality
 
@@ -773,3 +840,40 @@ See the [App Module Creation Guide](docs/creating_app_modules.md) for:
 - Ready-to-use boilerplate templates
 
 The guide includes everything you need to extend ExMacOSControl with new functionality while following established patterns and maintaining code quality standards.
+
+## What's Next?
+
+### 📚 Learn More
+
+- **[Getting Started Guide](https://hexdocs.pm/ex_macos_control/guides_getting_started.html)** - Complete walkthrough for first-time users
+- **[Common Patterns](https://hexdocs.pm/ex_macos_control/guides_common_patterns.html)** - Real-world automation examples and workflows
+- **[DSL vs Raw AppleScript](https://hexdocs.pm/ex_macos_control/guides_dsl_vs_raw.html)** - Choosing the right approach for your use case
+- **[Advanced Usage](https://hexdocs.pm/ex_macos_control/guides_advanced_usage.html)** - Telemetry, custom adapters, and performance tuning
+- **[Performance Guide](https://hexdocs.pm/ex_macos_control/performance.html)** - Optimization tips and best practices
+
+### 💬 Get Help
+
+- **Issues**: [GitHub Issues](https://github.com/houllette/ex_macos_control/issues) for bugs and feature requests
+- **Discussions**: [GitHub Discussions](https://github.com/houllette/ex_macos_control/discussions) for questions and community support
+- **Documentation**: [HexDocs](https://hexdocs.pm/ex_macos_control) for API reference
+
+### 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
+
+- Code of conduct
+- Development setup
+- Testing requirements
+- Pull request process
+
+Whether it's fixing bugs, adding new app modules, improving documentation, or sharing use cases—all contributions are appreciated!
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [Elixir](https://elixir-lang.org/)
+- Powered by macOS [osascript](https://ss64.com/osx/osascript.html) and the Shortcuts app
+- Inspired by the macOS automation community
