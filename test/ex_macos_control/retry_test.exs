@@ -3,6 +3,11 @@ defmodule ExMacOSControl.RetryTest do
 
   alias ExMacOSControl.Retry
 
+  # Telemetry handler module to avoid performance warnings
+  def handle_telemetry_event(event, measurements, metadata, config) do
+    send(config.test_pid, {:telemetry, event, measurements, metadata})
+  end
+
   describe "with_retry/2" do
     test "returns success immediately on first attempt" do
       result =
@@ -236,10 +241,8 @@ defmodule ExMacOSControl.RetryTest do
           [:ex_macos_control, :retry, :stop],
           [:ex_macos_control, :retry, :error]
         ],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:telemetry, event, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_telemetry_event/4,
+        %{test_pid: test_pid}
       )
 
       on_exit(fn -> :telemetry.detach(handler_id) end)

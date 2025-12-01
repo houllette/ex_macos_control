@@ -3,6 +3,11 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
 
   alias ExMacOSControl.OSAScriptAdapter
 
+  # Telemetry handler module to avoid performance warnings
+  def handle_telemetry_event(event, measurements, metadata, config) do
+    send(config.test_pid, {:telemetry, event, measurements, metadata})
+  end
+
   setup do
     # Attach a test telemetry handler
     test_pid = self()
@@ -15,10 +20,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
         [:ex_macos_control, :applescript, :stop],
         [:ex_macos_control, :applescript, :exception]
       ],
-      fn event, measurements, metadata, _config ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
-      end,
-      nil
+      &__MODULE__.handle_telemetry_event/4,
+      %{test_pid: test_pid}
     )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
