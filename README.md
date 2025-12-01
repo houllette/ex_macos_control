@@ -34,6 +34,10 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
   - Execute JavaScript in tabs
   - List all tab URLs
   - Close tabs by index
+- **Mail Automation**: Control Mail.app for email operations
+  - Send emails with CC and BCC support
+  - Get unread message counts
+  - Search mailboxes by subject
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
@@ -407,6 +411,72 @@ IO.inspect(tabs, label: "Open tabs")
 ```
 
 **Note**: This module requires automation permission for Safari. Tab indices are 1-based (1 is the first tab).
+
+### Mail Automation
+
+Control Mail.app programmatically:
+
+```elixir
+# Send an email
+:ok = ExMacOSControl.Mail.send_email(
+  to: "recipient@example.com",
+  subject: "Automated Report",
+  body: "Here is your daily report."
+)
+
+# Send with CC and BCC
+:ok = ExMacOSControl.Mail.send_email(
+  to: "team@example.com",
+  subject: "Team Update",
+  body: "Weekly status update.",
+  cc: ["manager@example.com"],
+  bcc: ["archive@example.com"]
+)
+
+# Get unread count (inbox)
+{:ok, count} = ExMacOSControl.Mail.get_unread_count()
+# => {:ok, 42}
+
+# Get unread count (specific mailbox)
+{:ok, count} = ExMacOSControl.Mail.get_unread_count("Work")
+# => {:ok, 5}
+
+# Search mailbox
+{:ok, messages} = ExMacOSControl.Mail.search_mailbox("INBOX", "invoice")
+# => {:ok, [%{subject: "Invoice #123", from: "billing@example.com", date: "2025-01-15"}, ...]}
+
+# Complete workflow example
+# Check unread count
+{:ok, unread} = ExMacOSControl.Mail.get_unread_count()
+IO.puts("You have #{unread} unread messages")
+
+# Search for important messages
+{:ok, messages} = ExMacOSControl.Mail.search_mailbox("INBOX", "urgent")
+
+# Process search results
+Enum.each(messages, fn msg ->
+  IO.puts("From: #{msg.from}")
+  IO.puts("Subject: #{msg.subject}")
+  IO.puts("Date: #{msg.date}")
+  IO.puts("---")
+end)
+
+# Send notification email if urgent messages found
+if length(messages) > 0 do
+  :ok = ExMacOSControl.Mail.send_email(
+    to: "admin@example.com",
+    subject: "Urgent Messages Alert",
+    body: "Found #{length(messages)} urgent messages requiring attention."
+  )
+end
+```
+
+**Important Safety Notes**:
+- Mail automation requires Mail.app to be configured with an email account
+- `send_email/1` sends emails immediately - there is no undo
+- Use with caution in production environments
+- Consider adding confirmation prompts before sending emails
+- Test with safe recipient addresses first
 
 ## Installation
 
