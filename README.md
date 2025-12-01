@@ -38,6 +38,11 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
   - Send emails with CC and BCC support
   - Get unread message counts
   - Search mailboxes by subject
+- **Messages Automation**: Control Messages.app for iMessage and SMS
+  - Send iMessages and SMS programmatically
+  - Retrieve recent messages from chats
+  - List all active chats with unread counts
+  - Get total unread message count
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
@@ -477,6 +482,90 @@ end
 - Use with caution in production environments
 - Consider adding confirmation prompts before sending emails
 - Test with safe recipient addresses first
+
+### Messages Automation
+
+⚠️  **Safety Warning:** Message sending functions will send real messages!
+
+Control the Messages app programmatically:
+
+```elixir
+# Send a message (iMessage or SMS)
+:ok = ExMacOSControl.Messages.send_message("+1234567890", "Hello!")
+
+# Send to a contact name
+:ok = ExMacOSControl.Messages.send_message("John Doe", "Meeting at 3pm?")
+
+# Force SMS (not iMessage)
+:ok = ExMacOSControl.Messages.send_message(
+  "+1234567890",
+  "Hello!",
+  service: :sms
+)
+
+# Force iMessage
+:ok = ExMacOSControl.Messages.send_message(
+  "john@icloud.com",
+  "Hello!",
+  service: :imessage
+)
+
+# Get recent messages from a chat
+{:ok, messages} = ExMacOSControl.Messages.get_recent_messages("+1234567890")
+# => {:ok, [
+#   %{from: "+1234567890", text: "Hello!", timestamp: "Monday, January 15, 2024 at 2:30:00 PM"},
+#   %{from: "+1234567890", text: "How are you?", timestamp: "Monday, January 15, 2024 at 2:31:00 PM"}
+# ]}
+
+# List all chats
+{:ok, chats} = ExMacOSControl.Messages.list_chats()
+# => {:ok, [
+#   %{id: "iMessage;+E:+1234567890", name: "+1234567890", unread: 2},
+#   %{id: "iMessage;-;+E:john@icloud.com", name: "John Doe", unread: 0}
+# ]}
+
+# Get total unread count
+{:ok, count} = ExMacOSControl.Messages.get_unread_count()
+# => {:ok, 5}
+
+# Complete workflow example
+# Check for unread messages
+{:ok, unread} = ExMacOSControl.Messages.get_unread_count()
+
+if unread > 0 do
+  # List all chats to see who has unread messages
+  {:ok, chats} = ExMacOSControl.Messages.list_chats()
+
+  # Find chats with unread messages
+  unread_chats = Enum.filter(chats, fn chat -> chat.unread > 0 end)
+
+  # Get recent messages from the first unread chat
+  if length(unread_chats) > 0 do
+    first_chat = hd(unread_chats)
+    {:ok, messages} = ExMacOSControl.Messages.get_recent_messages(first_chat.name)
+
+    # Process the messages
+    Enum.each(messages, fn msg ->
+      IO.puts("From: #{msg.from}")
+      IO.puts("Text: #{msg.text}")
+      IO.puts("Time: #{msg.timestamp}")
+      IO.puts("---")
+    end)
+  end
+end
+```
+
+**Required Permissions:**
+- Automation permission for Terminal/your app to control Messages
+- Full Disk Access (for reading message history)
+
+**Important Safety Notes**:
+- `send_message/2` and `send_message/3` send real messages immediately - there is no undo
+- Messages are sent via iMessage by default, falling back to SMS if iMessage is not available
+- Use the `:service` option to force SMS or iMessage
+- Be extremely careful when using in automated scripts
+- Consider adding confirmation prompts before sending messages
+- Test with your own phone number first
 
 ## Installation
 
