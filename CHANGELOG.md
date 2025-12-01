@@ -90,6 +90,15 @@ None (initial release)
   - Individual messages use `send to buddy` syntax
   - Group messages use `send to chat id` syntax
 
+## [0.1.2] - 2025-11-30
+
+### Fixed
+- **Telemetry Performance Warning**: Fixed telemetry handler warnings in test suite
+  - Changed from anonymous functions to module function references using `&Module.function/4` syntax
+  - Eliminates "local function" performance penalty warnings from `:telemetry.attach_many/4`
+  - Affected files: `retry_test.exs` and `osascript_adapter_telemetry_test.exs`
+  - Improves test suite performance and reduces noise in test output
+
 ## [Unreleased]
 
 ### Planned Features
@@ -99,5 +108,6 @@ None (initial release)
 
 ---
 
+[0.1.2]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.2
 [0.1.1]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.1
 [0.1.0]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.0
