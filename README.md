@@ -18,6 +18,16 @@ An Elixir library for macOS automation via AppleScript and JavaScript for Automa
 - **macOS Shortcuts**: Run Shortcuts on macOS with input parameter support
   - Pass strings, numbers, maps, and lists as input
   - List available shortcuts
+- **System Events**: Process management and application control
+  - List running processes
+  - Launch, activate, and quit applications
+  - Check if applications are running
+- **Safari Automation**: Control Safari browser programmatically
+  - Open URLs in new tabs
+  - Get current tab URL
+  - Execute JavaScript in tabs
+  - List all tab URLs
+  - Close tabs by index
 - **Platform Detection**: Automatic macOS platform detection and validation
 - **Test-Friendly**: Adapter pattern with Mox support for easy testing
 
@@ -178,6 +188,52 @@ end
 ```
 
 **Note**: This module requires automation permission for System Events. macOS may prompt for permission on first use.
+
+### Safari Automation
+
+Control Safari browser programmatically:
+
+```elixir
+# Open URL in new tab
+:ok = ExMacOSControl.Safari.open_url("https://example.com")
+# => :ok
+
+# Get current tab URL
+{:ok, url} = ExMacOSControl.Safari.get_current_url()
+# => {:ok, "https://example.com"}
+
+# Execute JavaScript in current tab
+{:ok, title} = ExMacOSControl.Safari.execute_javascript("document.title")
+# => {:ok, "Example Domain"}
+
+{:ok, result} = ExMacOSControl.Safari.execute_javascript("2 + 2")
+# => {:ok, "4"}
+
+# List all tab URLs across all windows
+{:ok, urls} = ExMacOSControl.Safari.list_tabs()
+# => {:ok, ["https://example.com", "https://google.com", "https://github.com"]}
+
+# Close a tab by index (1-based)
+:ok = ExMacOSControl.Safari.close_tab(2)
+# => :ok
+
+# Complete workflow example
+# Open a new tab
+:ok = ExMacOSControl.Safari.open_url("https://example.com")
+
+# Wait for page to load, then execute JavaScript
+Process.sleep(2000)
+{:ok, title} = ExMacOSControl.Safari.execute_javascript("document.title")
+
+# List all tabs
+{:ok, tabs} = ExMacOSControl.Safari.list_tabs()
+IO.inspect(tabs, label: "Open tabs")
+
+# Close the first tab
+:ok = ExMacOSControl.Safari.close_tab(1)
+```
+
+**Note**: This module requires automation permission for Safari. Tab indices are 1-based (1 is the first tab).
 
 ## Installation
 
