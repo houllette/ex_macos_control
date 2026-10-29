@@ -47,7 +47,7 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
       assert is_list(messages)
 
       # If there are messages, verify structure
-      if length(messages) > 0 do
+      if messages != [] do
         message = hd(messages)
         assert Map.has_key?(message, :from)
         assert Map.has_key?(message, :text)
@@ -80,15 +80,14 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
       assert is_list(chats)
 
       # If there are chats, verify structure
-      if length(chats) > 0 do
+      if chats != [] do
         chat = hd(chats)
         assert Map.has_key?(chat, :id)
         assert Map.has_key?(chat, :name)
         assert Map.has_key?(chat, :unread)
         assert is_binary(chat.id)
         assert is_binary(chat.name)
-        assert is_integer(chat.unread)
-        assert chat.unread >= 0
+        assert is_nil(chat.unread)
       end
     end
 
@@ -101,32 +100,15 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
         assert Map.keys(chat) |> Enum.sort() == [:id, :name, :unread]
         assert is_binary(chat.id)
         assert is_binary(chat.name)
-        assert is_integer(chat.unread)
+        assert is_nil(chat.unread)
       end)
     end
   end
 
   describe "get_unread_count/0" do
     @tag :skip
-    test "returns total unread count" do
-      assert {:ok, count} = Messages.get_unread_count()
-      assert is_integer(count)
-      assert count >= 0
-    end
-
-    @tag :skip
-    test "count matches sum of individual chat unreads" do
-      assert {:ok, total_count} = Messages.get_unread_count()
-      assert {:ok, chats} = Messages.list_chats()
-
-      # Sum up unread counts from all chats
-      sum_of_unreads =
-        chats
-        |> Enum.map(& &1.unread)
-        |> Enum.sum()
-
-      # Should match (or be close - there can be timing issues)
-      assert total_count == sum_of_unreads
+    test "reports unsupported unread counts instead of inventing zero" do
+      assert {:error, %ExMacOSControl.Error{type: :execution_error}} = Messages.get_unread_count()
     end
   end
 end

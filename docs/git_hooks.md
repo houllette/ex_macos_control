@@ -20,7 +20,7 @@ Runs automatically before every `git commit` and performs:
      - `mix dialyzer` - Type checking
 
 3. **SBOM Generation** - Creates Software Bill of Materials
-   - Command: `mix sbom.cyclonedx -d`
+   - Command: `mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force`
    - Generates dependency tracking file
    - Auto-stages the SBOM file for commit
 
@@ -30,9 +30,9 @@ Runs automatically before every `git push` and performs:
 
 1. **Dependency Lock Check** - Verifies `mix.lock` is up to date
 2. **Quality Checks** - Runs `mix quality`
-3. **SBOM Generation** - Creates updated SBOM
+3. **SBOM Generation** - Validates generation in `tmp/bom-pre-push.xml` without changing the tracked SBOM's timestamp and UUID
 4. **Test Suite** - Runs `mix test` to ensure all tests pass
-5. **SBOM Commit Check** - Verifies SBOM file is committed
+5. **SBOM Commit Check** - Checks `bom.xml` for uncommitted changes
 
 ## Hook Behavior
 
@@ -54,7 +54,7 @@ $ git commit -m "Add new feature"
 📋 Generating SBOM (Software Bill of Materials)...
 ✅ SBOM generated successfully
 
-📎 Staging sbom.cyclonedx.json...
+📎 Staging bom.xml...
 ✅ SBOM file staged
 
 🎉 All pre-commit checks passed!
@@ -109,10 +109,10 @@ git push -n
 mix quality
 
 # Manual SBOM generation
-mix sbom.cyclonedx -d
+mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force
 
 # Commit SBOM if it changed
-git add sbom.cyclonedx.json
+git add bom.xml
 git commit -m "Update SBOM"
 ```
 
@@ -188,7 +188,7 @@ mix dialyzer
 
 ### SBOM Generation Failing
 
-**Problem:** `mix sbom.cyclonedx -d` fails
+**Problem:** `mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force` fails
 
 **Solution:**
 
@@ -199,7 +199,7 @@ mix dialyzer
 
 2. Check if it's a dev-only dependency issue:
    ```bash
-   MIX_ENV=dev mix sbom.cyclonedx -d
+   MIX_ENV=dev mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force
    ```
 
 3. If it still fails, check the error message and ensure all dependencies are fetched
@@ -213,7 +213,7 @@ Edit `.git/hooks/pre-commit` or `.git/hooks/pre-push` and comment out unwanted c
 ```bash
 # Example: Disable SBOM generation temporarily
 # echo "📋 Generating SBOM (Software Bill of Materials)..."
-# if ! mix sbom.cyclonedx -d; then
+# if ! mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force; then
 #   echo -e "${RED}❌ SBOM generation failed!${NC}"
 #   exit 1
 # fi
@@ -317,7 +317,7 @@ jobs:
         run: mix quality
 
       - name: Generate SBOM
-        run: mix sbom.cyclonedx -d
+        run: mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force
 
       - name: Run tests
         run: mix test

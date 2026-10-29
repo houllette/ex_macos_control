@@ -204,7 +204,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
   describe "run_script_file/2 telemetry" do
     setup do
       # Create temporary test files
-      tmp_dir = System.tmp_dir!()
+      tmp_dir = Path.expand("tmp")
+      File.mkdir_p!(tmp_dir)
       applescript_file = Path.join(tmp_dir, "test_#{:erlang.unique_integer()}.applescript")
       js_file = Path.join(tmp_dir, "test_#{:erlang.unique_integer()}.js")
 

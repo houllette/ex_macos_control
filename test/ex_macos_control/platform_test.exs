@@ -134,7 +134,7 @@ defmodule ExMacOSControl.PlatformTest do
               Platform.validate_osascript!()
             end
 
-          assert error.message =~ "osascript command not found"
+          assert error.message =~ "osascript command is not available on this platform"
       end
     end
   end
@@ -159,7 +159,7 @@ defmodule ExMacOSControl.PlatformTest do
         _ ->
           assert {:error, error} = Platform.validate_osascript()
           assert %ExMacOSControl.PlatformError{} = error
-          assert error.message =~ "osascript command not found"
+          assert error.message =~ "osascript command is not available on this platform"
       end
     end
   end
@@ -241,6 +241,10 @@ defmodule ExMacOSControl.PlatformTest do
       assert {:error, _} = Platform.parse_macos_version("abc.def")
       assert {:error, _} = Platform.parse_macos_version("")
       assert {:error, _} = Platform.parse_macos_version("14.x")
+
+      for version <- ["-1", "14.-2", "14.1.-3"] do
+        assert {:error, _} = Platform.parse_macos_version(version)
+      end
     end
   end
 

@@ -46,7 +46,7 @@ defmodule ExMacOSControl.Finder do
   See the Permissions guide for setup instructions.
   """
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   @doc """
   Get the list of currently selected files/folders in Finder.
@@ -76,15 +76,18 @@ defmodule ExMacOSControl.Finder do
       set selectedItems to selection
       set paths to {}
       repeat with anItem in selectedItems
-        set end of paths to POSIX path of (anItem as alias)
+        set end of paths to {POSIX path of (anItem as alias)}
       end repeat
-      return paths as text
+      return my exmc_encode_rows(paths)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case ExMacOSControl.run_applescript(script) do
       {:ok, output} ->
-        {:ok, parse_paths(output)}
+        with {:ok, rows} <- ScriptOutput.decode(output, 1) do
+          {:ok, List.flatten(rows)}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -120,7 +123,7 @@ defmodule ExMacOSControl.Finder do
     script = """
     tell application "Finder"
       activate
-      open POSIX file "#{path}"
+      open POSIX file "#{ExMacOSControl.Script.escape_string(path)}"
     end tell
     """
 
@@ -159,7 +162,7 @@ defmodule ExMacOSControl.Finder do
     script = """
     tell application "Finder"
       activate
-      make new Finder window to POSIX file "#{path}"
+      make new Finder window to POSIX file "#{ExMacOSControl.Script.escape_string(path)}"
     end tell
     """
 
@@ -248,6 +251,8 @@ defmodule ExMacOSControl.Finder do
       tell application "Finder"
         if (count of Finder windows) > 0 then
           set current view of front Finder window to #{applescript_view}
+        else
+          error "No Finder windows are open" number -1728
         end if
       end tell
       """
@@ -263,16 +268,6 @@ defmodule ExMacOSControl.Finder do
          valid: [:icon, :list, :column, :gallery]
        )}
     end
-  end
-
-  # Parse comma-separated path list from AppleScript output
-  defp parse_paths(""), do: []
-
-  defp parse_paths(output) do
-    output
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
   end
 
   # Convert view atom to AppleScript view name

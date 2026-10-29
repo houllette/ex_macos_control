@@ -52,11 +52,9 @@ defmodule ExMacOSControl do
 
   """
 
-  @adapter Application.compile_env(
-             :ex_macos_control,
-             :adapter,
-             ExMacOSControl.OSAScriptAdapter
-           )
+  defp adapter do
+    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+  end
 
   @doc """
   Executes AppleScript code.
@@ -77,7 +75,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_applescript(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_applescript(script), do: @adapter.run_applescript(script)
+  def run_applescript(script), do: adapter().run_applescript(script)
 
   @doc """
   Executes AppleScript code with options.
@@ -112,7 +110,7 @@ defmodule ExMacOSControl do
   """
   @spec run_applescript(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_applescript(script, opts), do: @adapter.run_applescript(script, opts)
+  def run_applescript(script, opts), do: adapter().run_applescript(script, opts)
 
   @doc """
   Executes JavaScript for Automation (JXA) code.
@@ -136,7 +134,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_javascript(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def run_javascript(script), do: @adapter.run_javascript(script)
+  def run_javascript(script), do: adapter().run_javascript(script)
 
   @doc """
   Executes JavaScript for Automation (JXA) code with options.
@@ -167,7 +165,7 @@ defmodule ExMacOSControl do
   """
   @spec run_javascript(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, String.t()} | {:error, term()}
-  def run_javascript(script, opts), do: @adapter.run_javascript(script, opts)
+  def run_javascript(script, opts), do: adapter().run_javascript(script, opts)
 
   @doc """
   Executes a script file from disk with automatic language detection.
@@ -204,7 +202,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_script_file(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path), do: @adapter.run_script_file(file_path, [])
+  def run_script_file(file_path), do: adapter().run_script_file(file_path, [])
 
   @doc """
   Executes a script file from disk with options.
@@ -264,7 +262,7 @@ defmodule ExMacOSControl do
   """
   @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path, opts), do: @adapter.run_script_file(file_path, opts)
+  def run_script_file(file_path, opts), do: adapter().run_script_file(file_path, opts)
 
   @doc """
   Executes a macOS Shortcut by name.
@@ -289,7 +287,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
-  def run_shortcut(name), do: @adapter.run_shortcut(name)
+  def run_shortcut(name), do: adapter().run_shortcut(name)
 
   @doc """
   Executes a macOS Shortcut by name with input parameters.
@@ -327,7 +325,7 @@ defmodule ExMacOSControl do
   """
   @spec run_shortcut(String.t(), ExMacOSControl.Adapter.options()) ::
           :ok | {:ok, String.t()} | {:error, term()}
-  def run_shortcut(name, opts), do: @adapter.run_shortcut(name, opts)
+  def run_shortcut(name, opts), do: adapter().run_shortcut(name, opts)
 
   @doc """
   Lists all available macOS Shortcuts.
@@ -354,5 +352,5 @@ defmodule ExMacOSControl do
 
   """
   @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
-  def list_shortcuts, do: @adapter.list_shortcuts()
+  def list_shortcuts, do: adapter().list_shortcuts()
 end

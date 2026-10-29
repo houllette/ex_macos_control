@@ -9,181 +9,54 @@ defmodule ExMacOSControl.ShortcutsIntegrationTest do
 
   setup :verify_on_exit!
 
-  # Stub the mock adapter to use the real OSAScriptAdapter for integration tests
   setup do
-    Mox.stub_with(ExMacOSControl.AdapterMock, ExMacOSControl.OSAScriptAdapter)
+    Mox.stub_with(ExMacOSControl.AdapterMock, OSAScriptAdapter)
     :ok
   end
 
-  describe "list_shortcuts/0 integration" do
-    @tag :integration
-    test "lists shortcuts on macOS" do
-      # This test gracefully handles when no shortcuts are available
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, shortcuts} ->
-          # Verify it returns a list
-          assert is_list(shortcuts)
-          # Each item should be a string
-          Enum.each(shortcuts, fn shortcut ->
-            assert is_binary(shortcut)
-          end)
-
-        {:error, reason} ->
-          # Shortcuts app might not be available or accessible
-          # This is acceptable - don't fail the test
-          IO.puts("Shortcuts app not available: #{inspect(reason)}")
-          :ok
-      end
-    end
-
-    @tag :integration
-    test "returns empty list when parsed from empty output" do
-      # This is more of a unit test for the parsing logic
-      # but it's good to verify in integration context too
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, shortcuts} ->
-          # Should be a list (might be empty)
-          assert is_list(shortcuts)
-
-        {:error, _reason} ->
-          # App not available
-          :ok
-      end
-    end
+  test "lists shortcut names without executing them" do
+    assert {:ok, shortcuts} = OSAScriptAdapter.list_shortcuts()
+    assert Enum.all?(shortcuts, &is_binary/1)
   end
 
-  describe "run_shortcut/1 integration" do
-    @tag :integration
-    test "handles nonexistent shortcut gracefully" do
-      # Should return an error for a shortcut that doesn't exist
-      result = OSAScriptAdapter.run_shortcut("__NonexistentShortcut_12345__")
+  describe "explicitly opted-in echo fixture" do
+    @describetag :shortcut
 
-      case result do
-        {:error, error} ->
-          # Should get an error about the shortcut not being found
-          assert is_struct(error, ExMacOSControl.Error)
-
-        other ->
-          # Unexpected result - but this could happen if someone actually
-          # has a shortcut with this name
-          IO.puts("Unexpected result for nonexistent shortcut: #{inspect(other)}")
-          :ok
-      end
-    end
-  end
-
-  describe "run_shortcut/2 with input integration" do
-    @tag :integration
-    test "can run shortcut with string input if shortcuts exist" do
-      # First, try to get available shortcuts
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          # We have shortcuts, but we can't test them without knowing
-          # what they do. Just verify the interface works.
-          # Try to run it with input - it might fail if the shortcut
-          # doesn't accept input, but that's OK
-          result = OSAScriptAdapter.run_shortcut(first_shortcut, input: "test input")
-
-          # Should return :ok, {:ok, output}, or {:error, reason}
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          # No shortcuts available to test with
-          IO.puts("No shortcuts available to test input functionality")
-          :ok
-      end
+    # A generic --include integration overrides exclusions, so guard explicitly too.
+    unless Enum.any?(ExUnit.configuration()[:include], &(&1 in [:shortcut, {:shortcut, true}])) do
+      @describetag skip: "Requires --include shortcut and TEST_SHORTCUT_NAME pointing at a harmless echo fixture"
     end
 
-    @tag :integration
-    test "can run shortcut with number input if shortcuts exist" do
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          result = OSAScriptAdapter.run_shortcut(first_shortcut, input: 42)
+    # Create a harmless Shortcut that returns its input, then run:
+    # TEST_SHORTCUT_NAME=Echo mix test --include integration --include shortcut \
+    #   test/integration/shortcuts_integration_test.exs
+    # Never select an arbitrary Shortcut from the user's library.
+    setup do
+      name = System.get_env("TEST_SHORTCUT_NAME")
 
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          IO.puts("No shortcuts available to test number input")
-          :ok
+      unless is_binary(name) and name != "" do
+        flunk("Set TEST_SHORTCUT_NAME to a dedicated, harmless echo Shortcut before enabling :shortcut tests")
       end
+
+      %{shortcut: name}
     end
 
-    @tag :integration
-    test "can run shortcut with map input if shortcuts exist" do
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          result = OSAScriptAdapter.run_shortcut(first_shortcut, input: %{"key" => "value"})
-
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          IO.puts("No shortcuts available to test map input")
-          :ok
-      end
+    test "returns string input", %{shortcut: name} do
+      assert {:ok, "test input"} = OSAScriptAdapter.run_shortcut(name, input: "test input", timeout: 5000)
     end
 
-    @tag :integration
-    test "can run shortcut with list input if shortcuts exist" do
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          result = OSAScriptAdapter.run_shortcut(first_shortcut, input: ["item1", "item2"])
-
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          IO.puts("No shortcuts available to test list input")
-          :ok
-      end
+    test "returns numeric input", %{shortcut: name} do
+      assert {:ok, "42"} = OSAScriptAdapter.run_shortcut(name, input: 42, timeout: 5000)
     end
 
-    @tag :integration
-    test "handles empty options (backward compatibility)" do
-      case OSAScriptAdapter.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          result = OSAScriptAdapter.run_shortcut(first_shortcut, [])
-
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          IO.puts("No shortcuts available to test backward compatibility")
-          :ok
-      end
-    end
-  end
-
-  describe "facade integration" do
-    @tag :integration
-    test "ExMacOSControl.list_shortcuts/0 works" do
-      result = ExMacOSControl.list_shortcuts()
-
-      case result do
-        {:ok, shortcuts} ->
-          assert is_list(shortcuts)
-
-        {:error, _reason} ->
-          # App not available
-          :ok
-      end
+    test "returns JSON input", %{shortcut: name} do
+      input = %{"key" => "value"}
+      assert {:ok, output} = OSAScriptAdapter.run_shortcut(name, input: input, timeout: 5000)
+      assert Jason.decode!(output) == input
     end
 
-    @tag :integration
-    test "ExMacOSControl.run_shortcut/2 with input works" do
-      case ExMacOSControl.list_shortcuts() do
-        {:ok, [first_shortcut | _]} ->
-          result = ExMacOSControl.run_shortcut(first_shortcut, input: "test")
-
-          assert match?(:ok, result) or match?({:ok, _}, result) or
-                   match?({:error, _}, result)
-
-        _ ->
-          IO.puts("No shortcuts available for facade test")
-          :ok
-      end
+    test "facade returns input", %{shortcut: name} do
+      assert {:ok, "test"} = ExMacOSControl.run_shortcut(name, input: "test", timeout: 5000)
     end
   end
 end

@@ -9,6 +9,22 @@ defmodule ExMacOSControl.RetryTest do
   end
 
   describe "with_retry/2" do
+    test "rejects invalid options before invoking the operation" do
+      operation = fn -> send(self(), :invoked) end
+
+      for attempts <- [0, -1, 1.5, :infinity, "3", nil] do
+        assert_raise ArgumentError, ":max_attempts must be a positive integer", fn ->
+          Retry.with_retry(operation, max_attempts: attempts)
+        end
+      end
+
+      assert_raise ArgumentError, ":backoff must be :exponential or :linear", fn ->
+        Retry.with_retry(operation, backoff: :unknown)
+      end
+
+      refute_received :invoked
+    end
+
     test "returns success immediately on first attempt" do
       result =
         Retry.with_retry(fn ->

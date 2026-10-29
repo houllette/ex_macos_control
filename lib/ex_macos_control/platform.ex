@@ -377,9 +377,9 @@ defmodule ExMacOSControl.Platform do
   end
 
   defp parse_version_parts([major, minor, patch]) do
-    with {major_int, ""} <- Integer.parse(major),
-         {minor_int, ""} <- Integer.parse(minor),
-         {patch_int, ""} <- Integer.parse(patch) do
+    with {major_int, ""} when major_int >= 0 <- Integer.parse(major),
+         {minor_int, ""} when minor_int >= 0 <- Integer.parse(minor),
+         {patch_int, ""} when patch_int >= 0 <- Integer.parse(patch) do
       {:ok, {major_int, minor_int, patch_int}}
     else
       _ -> {:error, "Invalid version format"}

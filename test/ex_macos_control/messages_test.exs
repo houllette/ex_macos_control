@@ -1,5 +1,6 @@
 defmodule ExMacOSControl.MessagesTest do
   use ExUnit.Case, async: true
+  import ExMacOSControl.TestHelpers, only: [script_output: 1]
   import Mox
 
   alias ExMacOSControl.Error
@@ -91,26 +92,13 @@ defmodule ExMacOSControl.MessagesTest do
   end
 
   describe "send_message/3" do
-    test "sends message with service: :imessage" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "buddy"
-        assert script =~ "+1234567890"
-        assert script =~ "Hello!"
-        {:ok, ""}
-      end)
+    test "rejects explicit service selection without sending anything" do
+      for service <- [:imessage, :sms, :invalid, nil] do
+        assert {:error, %Error{type: :execution_error, message: message}} =
+                 Messages.send_message("+1234567890", "Hello!", service: service)
 
-      assert :ok = Messages.send_message("+1234567890", "Hello!", service: :imessage)
-    end
-
-    test "sends message with service: :sms" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "buddy"
-        assert script =~ "+1234567890"
-        assert script =~ "Hello!"
-        {:ok, ""}
-      end)
-
-      assert :ok = Messages.send_message("+1234567890", "Hello!", service: :sms)
+        assert message =~ "service selection is not supported"
+      end
     end
 
     test "sends message with service: :auto (default)" do
@@ -122,31 +110,45 @@ defmodule ExMacOSControl.MessagesTest do
       assert :ok = Messages.send_message("+1234567890", "Hello!", service: :auto)
     end
 
-    test "handles errors with service options" do
-      error = Error.execution_error("Service not available")
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, error}
-      end)
-
-      assert {:error, ^error} =
-               Messages.send_message("+1234567890", "Hello!", service: :sms)
+    test "rejects invalid recipients, message text and options without sending" do
+      for {recipient, text, opts} <- [
+            {nil, "Hello", []},
+            {" ", "Hello", []},
+            {"Alice", nil, []},
+            {"Alice", "", []},
+            {"Alice", "Hello", nil},
+            {"Alice", "Hello", [:invalid]},
+            {"Alice", "Hello", [group_chat: :yes]}
+          ] do
+        assert {:error, %Error{type: :execution_error}} = Messages.send_message(recipient, text, opts)
+      end
     end
 
-    test "escapes quotes with service option" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "\\\""
-        {:ok, ""}
+    test "refuses to send when multiple chats match the participant names" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:ok, script_output([["one", "Alice & Bob"], ["two", "Alice & Bob"]])}
       end)
 
-      assert :ok = Messages.send_message("John \"Johnny\" Doe", "Quote: \"Hi\"", service: :sms)
+      assert {:error, %Error{message: message}} = Messages.send_message("Alice & Bob", "Hello", group_chat: true)
+      assert message =~ "Multiple chats"
+    end
+
+    test "refuses to send when chat output is malformed" do
+      for output <- ["one|Alice & Bob|0", "EXMC1\none\nEND", script_output([["", "Alice & Bob"]])] do
+        expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, output} end)
+
+        assert {:error, %Error{type: :execution_error}} =
+                 Messages.send_message("Alice & Bob", "Hello", group_chat: true)
+      end
     end
 
     test "sends message to group chat" do
       # First call: list_chats to find the group
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "chats"
-        {:ok, "any;+;chat123|John Doe & Jane Smith|0,any;-;+1234567890|John Doe|0"}
+        assert script =~ "repeat with chatParticipant in participants_list"
+        refute script =~ "first_participant"
+        {:ok, script_output([["any;+;chat123", "John Doe & Jane Smith"], ["any;-;+1234567890", "John Doe"]])}
       end)
 
       # Second call: send to the chat
@@ -154,6 +156,10 @@ defmodule ExMacOSControl.MessagesTest do
         assert script =~ "chat id"
         assert script =~ "any;+;chat123"
         assert script =~ "Hello everyone!"
+        assert script =~ ~s|if (count of targetParticipants) < 2 then error "Destination is not a group chat"|
+        assert script =~ ~s(if targetNames is not "John Doe & Jane Smith" then error)
+        assert script =~ "Group participants changed; refusing to send"
+        assert script =~ "send \"Hello everyone!\" to targetChat"
         {:ok, ""}
       end)
 
@@ -165,7 +171,7 @@ defmodule ExMacOSControl.MessagesTest do
       # list_chats call returns chats without the target group
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "chats"
-        {:ok, "any;-;+1234567890|John Doe|0"}
+        {:ok, script_output([["any;-;+1234567890", "John Doe"]])}
       end)
 
       assert {:error, %Error{type: :not_found}} =
@@ -186,7 +192,7 @@ defmodule ExMacOSControl.MessagesTest do
     test "sends to group chat with exact participant match" do
       # Should match exact participant names
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "any;+;chat456|Alice Smith & Bob Jones|0,any;+;chat789|Alice Smith|0"}
+        {:ok, script_output([["any;+;chat456", "Alice Smith & Bob Jones"], ["any;+;chat789", "Alice Smith"]])}
       end)
 
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
@@ -201,7 +207,7 @@ defmodule ExMacOSControl.MessagesTest do
 
     test "escapes quotes in group chat message" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "any;+;chat123|John & Jane|0"}
+        {:ok, script_output([["any;+;chat123", "John & Jane"]])}
       end)
 
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
@@ -223,7 +229,10 @@ defmodule ExMacOSControl.MessagesTest do
         assert script =~ "messages"
 
         {:ok,
-         "+1234567890|Hello!|Monday, January 15, 2024 at 2:30:00 PM\n+1234567890|How are you?|Monday, January 15, 2024 at 2:31:00 PM\n"}
+         script_output([
+           ["+1234567890", "Hello!", "Monday, January 15, 2024 at 2:30:00 PM"],
+           ["+1234567890", "How are you?", "Monday, January 15, 2024 at 2:31:00 PM"]
+         ])}
       end)
 
       assert {:ok, messages} = Messages.get_recent_messages("+1234567890")
@@ -242,9 +251,26 @@ defmodule ExMacOSControl.MessagesTest do
              }
     end
 
+    test "preserves punctuation, multiline text, tabs and empty fields" do
+      text = "  Hello, Alice | Bob\nnext\tline\r\\n 雪  "
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(outputRows)"
+        {:ok, script_output([["", text, "Monday, January 15, 2024"]])}
+      end)
+
+      assert {:ok, [%{from: "", text: ^text, timestamp: "Monday, January 15, 2024"}]} =
+               Messages.get_recent_messages("Alice")
+    end
+
+    test "returns a structured error for malformed message output" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, "sender|private text"} end)
+      assert {:error, %Error{type: :execution_error}} = Messages.get_recent_messages("Alice")
+    end
+
     test "handles empty message list" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Messages.get_recent_messages("+1234567890")
@@ -253,7 +279,7 @@ defmodule ExMacOSControl.MessagesTest do
     test "escapes quotes in recipient" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "\\\""
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Messages.get_recent_messages("John \"Johnny\" Doe")
@@ -291,7 +317,7 @@ defmodule ExMacOSControl.MessagesTest do
 
     test "parses single message correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "sender@example.com|Test message|Monday, January 15, 2024 at 3:00:00 PM\n"}
+        {:ok, script_output([["sender@example.com", "Test message", "Monday, January 15, 2024 at 3:00:00 PM"]])}
       end)
 
       assert {:ok, [message]} = Messages.get_recent_messages("sender@example.com")
@@ -303,16 +329,16 @@ defmodule ExMacOSControl.MessagesTest do
              }
     end
 
-    test "trims whitespace from parsed fields" do
+    test "preserves whitespace in parsed fields" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "  sender@example.com  |  Test message  |  Monday, January 15, 2024  \n"}
+        {:ok, script_output([["  sender@example.com  ", "  Test message  ", "  Monday, January 15, 2024  "]])}
       end)
 
       assert {:ok, [message]} = Messages.get_recent_messages("sender@example.com")
 
-      assert message.from == "sender@example.com"
-      assert message.text == "Test message"
-      assert message.timestamp == "Monday, January 15, 2024"
+      assert message.from == "  sender@example.com  "
+      assert message.text == "  Test message  "
+      assert message.timestamp == "  Monday, January 15, 2024  "
     end
   end
 
@@ -324,7 +350,11 @@ defmodule ExMacOSControl.MessagesTest do
         assert script =~ "id"
         assert script =~ "participants"
 
-        {:ok, "iMessage;+E:+1234567890|+1234567890|0,iMessage;-;+E:john@icloud.com|John Doe|0"}
+        {:ok,
+         script_output([
+           ["iMessage;+E:+1234567890", "+1234567890"],
+           ["iMessage;-;+E:john@icloud.com", "John Doe"]
+         ])}
       end)
 
       assert {:ok, chats} = Messages.list_chats()
@@ -333,19 +363,19 @@ defmodule ExMacOSControl.MessagesTest do
       assert Enum.at(chats, 0) == %{
                id: "iMessage;+E:+1234567890",
                name: "+1234567890",
-               unread: 0
+               unread: nil
              }
 
       assert Enum.at(chats, 1) == %{
                id: "iMessage;-;+E:john@icloud.com",
                name: "John Doe",
-               unread: 0
+               unread: nil
              }
     end
 
     test "handles empty chat list" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Messages.list_chats()
@@ -373,7 +403,7 @@ defmodule ExMacOSControl.MessagesTest do
 
     test "parses single chat correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "chat123|Contact Name|0"}
+        {:ok, script_output([["chat123", "Contact Name"]])}
       end)
 
       assert {:ok, [chat]} = Messages.list_chats()
@@ -381,38 +411,36 @@ defmodule ExMacOSControl.MessagesTest do
       assert chat == %{
                id: "chat123",
                name: "Contact Name",
-               unread: 0
+               unread: nil
              }
     end
 
-    test "trims whitespace from parsed fields" do
+    test "preserves whitespace in parsed fields" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "  chat123  |  Contact Name  |  0  "}
+        {:ok, script_output([["  chat123  ", "  Contact Name  "]])}
       end)
 
       assert {:ok, [chat]} = Messages.list_chats()
 
-      assert chat.id == "chat123"
-      assert chat.name == "Contact Name"
-      assert chat.unread == 0
+      assert chat.id == "  chat123  "
+      assert chat.name == "  Contact Name  "
+      assert is_nil(chat.unread)
     end
 
-    test "parses zero unread count" do
+    test "marks unavailable unread counts as unknown" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "chat123|Contact|0"}
+        {:ok, script_output([["chat123", "Contact"]])}
       end)
 
       assert {:ok, [chat]} = Messages.list_chats()
-      assert chat.unread == 0
+      assert is_nil(chat.unread)
     end
   end
 
   describe "get_unread_count/0" do
-    test "returns zero (placeholder implementation)" do
-      # Note: This is a placeholder implementation since the Messages AppleScript API
-      # does not expose unread counts directly. Full implementation requires Full Disk Access
-      # and direct SQLite database queries.
-      assert {:ok, 0} = Messages.get_unread_count()
+    test "reports unsupported functionality instead of fabricating zero" do
+      assert {:error, %Error{type: :execution_error, message: message}} = Messages.get_unread_count()
+      assert message =~ "not supported"
     end
   end
 end

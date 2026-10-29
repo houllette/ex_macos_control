@@ -218,10 +218,16 @@ defmodule ExMacOSControl.Script do
   defp format_argument(true), do: "true"
   defp format_argument(false), do: "false"
 
+  @doc false
+  @spec escape_string(String.t()) :: String.t()
+  def escape_string(string) when is_binary(string) do
+    string
+    |> String.replace("\\", "\\\\")
+    |> String.replace("\"", "\\\"")
+  end
+
   defp quote_string(str) when is_binary(str) do
-    # Escape any existing quotes and wrap in quotes
-    escaped = String.replace(str, "\"", "\\\"")
-    "\"#{escaped}\""
+    "\"#{escape_string(str)}\""
   end
 
   defp indent(text, spaces) do

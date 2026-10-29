@@ -1,5 +1,6 @@
 defmodule ExMacOSControl.SystemEventsTest do
   use ExUnit.Case, async: true
+  import ExMacOSControl.TestHelpers, only: [script_output: 1]
   import Mox
 
   alias ExMacOSControl.Error
@@ -12,25 +13,36 @@ defmodule ExMacOSControl.SystemEventsTest do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "System Events"
         assert script =~ "name of every application process"
-        {:ok, "Safari, Finder, Terminal"}
+        {:ok, script_output([["Safari"], ["Finder"], ["Terminal"]])}
       end)
 
       assert {:ok, processes} = SystemEvents.list_processes()
       assert processes == ["Safari", "Finder", "Terminal"]
     end
 
-    test "trims whitespace from process names" do
+    test "preserves whitespace in process names" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, " Safari , Finder ,  Terminal  "}
+        {:ok, script_output([[" Safari "], ["Finder "], ["  Terminal  "]])}
       end)
 
       assert {:ok, processes} = SystemEvents.list_processes()
-      assert processes == ["Safari", "Finder", "Terminal"]
+      assert processes == [" Safari ", "Finder ", "  Terminal  "]
+    end
+
+    test "preserves punctuation in process names" do
+      names = ["Example, Inc.", "Pipe | app\t雪"]
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(processRows)"
+        {:ok, script_output(Enum.map(names, &[&1]))}
+      end)
+
+      assert {:ok, ^names} = SystemEvents.list_processes()
     end
 
     test "handles empty process list" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, processes} = SystemEvents.list_processes()
@@ -39,7 +51,7 @@ defmodule ExMacOSControl.SystemEventsTest do
 
     test "handles single process" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "Finder"}
+        {:ok, script_output([["Finder"]])}
       end)
 
       assert {:ok, processes} = SystemEvents.list_processes()
@@ -359,6 +371,13 @@ defmodule ExMacOSControl.SystemEventsTest do
   end
 
   describe "get_window_properties/1" do
+    test "returns an error instead of raising for malformed numeric output" do
+      for output <- ["x, 0, 800, 600, Title", "0, 0, 800px, 600, Title", "invalid"] do
+        expect(ExMacOSControl.AdapterMock, :run_applescript, fn _ -> {:ok, output} end)
+        assert {:error, %Error{type: :execution_error}} = SystemEvents.get_window_properties("App")
+      end
+    end
+
     test "returns window properties" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "System Events"
@@ -413,6 +432,18 @@ defmodule ExMacOSControl.SystemEventsTest do
   end
 
   describe "set_window_bounds/3" do
+    test "rejects non-integer coordinates and nonpositive dimensions before execution" do
+      for position <- [["0", 0], [0, "1}\nquit"], [1.5, 0]] do
+        assert {:error, %Error{type: :execution_error}} =
+                 SystemEvents.set_window_bounds("App", position: position, size: [400, 500])
+      end
+
+      for size <- [[0, 500], [-1, 500], [400, "500"], [400, 1.5]] do
+        assert {:error, %Error{type: :execution_error}} =
+                 SystemEvents.set_window_bounds("App", position: [0, 0], size: size)
+      end
+    end
+
     test "sets window position and size" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "System Events"
@@ -536,16 +567,27 @@ defmodule ExMacOSControl.SystemEventsTest do
         assert script =~ ~s(tell application "Finder")
         assert script =~ "selection"
         assert script =~ "POSIX path"
-        {:ok, "/Users/test/file1.txt, /Users/test/file2.txt"}
+        {:ok, script_output([["/Users/test/file1.txt"], ["/Users/test/file2.txt"]])}
       end)
 
       assert {:ok, items} = SystemEvents.get_selected_finder_items()
       assert items == ["/Users/test/file1.txt", "/Users/test/file2.txt"]
     end
 
+    test "preserves punctuation and newlines in selected paths" do
+      paths = ["/Users/test/one,two\n雪.txt ", "/Users/test/three|four"]
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(itemPaths)"
+        {:ok, script_output(Enum.map(paths, &[&1]))}
+      end)
+
+      assert {:ok, ^paths} = SystemEvents.get_selected_finder_items()
+    end
+
     test "returns empty list when nothing selected" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = SystemEvents.get_selected_finder_items()
@@ -563,7 +605,7 @@ defmodule ExMacOSControl.SystemEventsTest do
 
     test "parses multiple paths correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "/Users/test/a.txt, /Users/test/b.txt, /Users/test/c.txt"}
+        {:ok, script_output([["/Users/test/a.txt"], ["/Users/test/b.txt"], ["/Users/test/c.txt"]])}
       end)
 
       assert {:ok, items} = SystemEvents.get_selected_finder_items()
@@ -575,20 +617,20 @@ defmodule ExMacOSControl.SystemEventsTest do
 
     test "handles single selected item" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "/Users/test/single.txt"}
+        {:ok, script_output([["/Users/test/single.txt"]])}
       end)
 
       assert {:ok, items} = SystemEvents.get_selected_finder_items()
       assert items == ["/Users/test/single.txt"]
     end
 
-    test "trims whitespace from paths" do
+    test "preserves whitespace in paths" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, " /Users/test/file1.txt , /Users/test/file2.txt "}
+        {:ok, script_output([["/Users/test/file1.txt "], ["/Users/test/file2.txt "]])}
       end)
 
       assert {:ok, items} = SystemEvents.get_selected_finder_items()
-      assert items == ["/Users/test/file1.txt", "/Users/test/file2.txt"]
+      assert items == ["/Users/test/file1.txt ", "/Users/test/file2.txt "]
     end
   end
 

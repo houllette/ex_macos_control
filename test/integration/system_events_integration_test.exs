@@ -5,6 +5,12 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
 
   # These tests require macOS with osascript
   @moduletag :integration
+  @moduletag :desktop
+
+  # ExUnit includes override excludes; :integration alone must not enable mutations.
+  unless Enum.any?(ExUnit.configuration()[:include], &(&1 in [:desktop, {:desktop, true}])) do
+    @moduletag skip: "Requires --include desktop (use an isolated macOS session)"
+  end
 
   setup do
     # Skip if not on macOS with osascript
@@ -27,7 +33,7 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
     test "returns list of actual running processes" do
       assert {:ok, processes} = SystemEvents.list_processes()
       assert is_list(processes)
-      assert length(processes) > 0
+      assert processes != []
 
       # Finder always runs on macOS
       assert "Finder" in processes

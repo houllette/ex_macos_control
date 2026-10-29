@@ -3,7 +3,7 @@ defmodule ExMacOSControl.Messages do
   Provides functions for automating the Messages application on macOS.
 
   This module enables you to send iMessages and SMS, retrieve messages,
-  list chats, and check unread counts.
+  and list chats. Unread counts are not exposed by the AppleScript API.
 
   ## Safety Warning
 
@@ -30,11 +30,11 @@ defmodule ExMacOSControl.Messages do
       )
       # => :ok
 
-      # Specify service (iMessage or SMS)
+      # Let Messages select the delivery service
       ExMacOSControl.Messages.send_message(
         "+1234567890",
         "Hello!",
-        service: :sms
+        service: :auto
       )
       # => :ok
 
@@ -48,13 +48,13 @@ defmodule ExMacOSControl.Messages do
       # List all chats
       {:ok, chats} = ExMacOSControl.Messages.list_chats()
       # => {:ok, [
-      #   %{id: "...", name: "...", unread: 0},
+      #   %{id: "...", name: "...", unread: nil},
       #   ...
       # ]}
 
-      # Get unread count
-      {:ok, count} = ExMacOSControl.Messages.get_unread_count()
-      # => {:ok, 0}  # Note: Currently returns 0 as placeholder
+      # Unread counts are unavailable
+      ExMacOSControl.Messages.get_unread_count()
+      # => {:error, %ExMacOSControl.Error{type: :execution_error, ...}}
 
   ## Group Chat Support
 
@@ -80,12 +80,13 @@ defmodule ExMacOSControl.Messages do
 
   ## Limitations
 
-  - The `:service` option (iMessage/SMS) is currently ignored due to AppleScript API limitations
-  - `get_unread_count()` returns 0 as the Messages AppleScript API doesn't expose unread counts
-  - For real unread counts, you would need Full Disk Access and direct SQLite database queries
+  - Only `service: :auto` is supported; explicit `:sms`/`:imessage` requests return an error before sending
+  - `get_unread_count/0` returns an error, and chat `:unread` values are `nil` (unknown), not zero
+  - Message-history APIs vary by macOS version and require native validation
+  - Direct SQLite access is not implemented; Full Disk Access alone does not add AppleScript history support
   """
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -96,7 +97,7 @@ defmodule ExMacOSControl.Messages do
   Sends a message to a recipient via Messages app.
 
   The recipient can be either a phone number (with country code) or a contact name.
-  By default, Messages will use iMessage if available, falling back to SMS.
+  Messages selects the delivery service; this library does not guarantee SMS fallback.
 
   ## Parameters
 
@@ -141,7 +142,7 @@ defmodule ExMacOSControl.Messages do
   - `recipient` - Phone number, contact name, or group chat participant names
   - `text` - The message content to send
   - `opts` - Keyword list of options:
-    - `:service` - `:imessage` or `:sms` (default: automatically determined)
+    - `:service` - Only `:auto` is supported (default). Other values return an error before sending.
     - `:group_chat` - `true` if sending to a group chat (default: `false`)
 
   ## Returns
@@ -151,13 +152,13 @@ defmodule ExMacOSControl.Messages do
 
   ## Examples
 
-      # Force SMS (not iMessage)
-      send_message("+1234567890", "Hello!", service: :sms)
+      # Allow Messages to choose the service
+      send_message("+1234567890", "Hello!", service: :auto)
       # => :ok
 
-      # Force iMessage
+      # Explicit routing is unsupported and never silently ignored
       send_message("john@icloud.com", "Hello!", service: :imessage)
-      # => :ok
+      # => {:error, %ExMacOSControl.Error{type: :execution_error, ...}}
 
       # Send to a group chat (participant names joined by " & ")
       send_message("John Doe & Jane Smith", "Hello everyone!", group_chat: true)
@@ -180,17 +181,11 @@ defmodule ExMacOSControl.Messages do
   """
   @spec send_message(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
   def send_message(recipient, text, opts) do
-    is_group_chat = Keyword.get(opts, :group_chat, false)
-
-    if is_group_chat do
-      send_to_group_chat(recipient, text, opts)
-    else
-      service = Keyword.get(opts, :service, :auto)
-      script = build_send_message_script(recipient, text, service, false)
-
-      case adapter().run_applescript(script) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
+    with :ok <- validate_send_options(recipient, text, opts) do
+      if Keyword.get(opts, :group_chat, false) do
+        send_to_group_chat(recipient, text)
+      else
+        send_script(build_send_message_script(recipient, text))
       end
     end
   end
@@ -233,26 +228,33 @@ defmodule ExMacOSControl.Messages do
     tell application "Messages"
       set targetChat to first chat whose participants contains "#{escape_quotes(recipient)}"
       set recentMessages to last 20 messages of targetChat
-      set output to ""
+      set outputRows to {}
 
       repeat with msg in recentMessages
-        set output to output & (handle of msg) & "|" & (text of msg) & "|" & (date of msg) & "\\n"
+        set end of outputRows to {handle of msg, text of msg, (date of msg) as text}
       end repeat
 
-      return output
+      return my exmc_encode_rows(outputRows)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
-      {:ok, result} -> {:ok, parse_messages(result)}
-      {:error, reason} -> {:error, reason}
+      {:ok, result} ->
+        with {:ok, rows} <- ScriptOutput.decode(result, 3) do
+          {:ok, Enum.map(rows, fn [from, text, timestamp] -> %{from: from, text: text, timestamp: timestamp} end)}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @doc """
   Lists all active chats in the Messages app.
 
-  Returns a list of chats with their IDs, names, and unread counts.
+  Returns a list of chats with their IDs and names. The `:unread` field is `nil`
+  because the AppleScript API does not expose unread counts.
 
   ## Returns
 
@@ -263,8 +265,8 @@ defmodule ExMacOSControl.Messages do
 
       list_chats()
       # => {:ok, [
-      #   %{id: "chat1", name: "+1234567890", unread: 2},
-      #   %{id: "chat2", name: "John Doe", unread: 0},
+      #   %{id: "chat1", name: "+1234567890", unread: nil},
+      #   %{id: "chat2", name: "John Doe", unread: nil},
       #   ...
       # ]}
 
@@ -277,90 +279,90 @@ defmodule ExMacOSControl.Messages do
   def list_chats do
     script = """
     tell application "Messages"
-      set chatList to ""
+      set chatRows to {}
       repeat with c in chats
         try
           set chatID to id of c
           set chatName to ""
-          try
-            set participants_list to participants of c
-            if (count of participants_list) > 0 then
-              set first_participant to item 1 of participants_list
-              try
-                set chatName to full name of first_participant
-              end try
-              if chatName is "" or chatName is missing value then
-                set chatName to id of first_participant
-              end if
+          set participants_list to participants of c
+          repeat with chatParticipant in participants_list
+            set participantName to full name of chatParticipant
+            if participantName is "" or participantName is missing value then
+              set participantName to id of chatParticipant
             end if
-          end try
-          if chatName is missing value then
-            set chatName to ""
-          end if
-          set chatInfo to chatID & "|" & chatName & "|0"
-          if chatList is not "" then
-            set chatList to chatList & "," & chatInfo
-          else
-            set chatList to chatInfo
-          end if
+            if chatName is not "" then set chatName to chatName & " & "
+            set chatName to chatName & participantName
+          end repeat
+          set end of chatRows to {chatID, chatName}
+        on error errMsg number errNum
+          error errMsg number errNum
         end try
       end repeat
-      return chatList
+      return my exmc_encode_rows(chatRows)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
-      {:ok, result} -> {:ok, parse_chats(result)}
+      {:ok, result} -> parse_chats(result)
       {:error, reason} -> {:error, reason}
     end
   end
 
   @doc """
-  Gets the total number of unread messages across all chats.
+  Reports that unread counts are unsupported by the Messages AppleScript API.
 
-  ## Returns
-
-  - `{:ok, count}` - Number of unread messages
-  - `{:error, Error.t()}` on failure
-
-  ## Examples
-
-      get_unread_count()
-      # => {:ok, 5}
-
-  ## Errors
-
-  - `:execution_error` - Error retrieving unread count
-  - `:not_found` - Messages app not found
+  Returns an execution error rather than fabricating a zero count. No application
+  is contacted. Chat `:unread` fields returned by `list_chats/0` are likewise `nil`.
   """
-  @spec get_unread_count() :: {:ok, non_neg_integer()} | {:error, Error.t()}
+  @spec get_unread_count() :: {:error, Error.t()}
   def get_unread_count do
-    # Note: The Messages AppleScript API does not expose unread counts directly.
-    # This would require Full Disk Access to query the Messages database directly.
-    # For now, we return 0 as a placeholder.
-    # To get real unread counts, you would need to:
-    # 1. Grant Full Disk Access to your terminal/app
-    # 2. Query ~/Library/Messages/chat.db directly using SQLite
-    {:ok, 0}
+    {:error, Error.execution_error("Messages unread counts are not supported by the AppleScript API")}
   end
 
   ## Private Helpers
 
-  # Private helper to send message to a group chat
-  @spec send_to_group_chat(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
-  defp send_to_group_chat(participant_names, text, opts) do
-    case find_group_chat_by_participants(participant_names) do
-      {:ok, chat_id} ->
-        service = Keyword.get(opts, :service, :auto)
-        script = build_send_message_script(chat_id, text, service, true)
+  defp validate_send_options(recipient, text, opts) do
+    cond do
+      not is_binary(recipient) or String.trim(recipient) == "" ->
+        {:error, Error.execution_error("Recipient must be a non-empty string")}
 
-        case adapter().run_applescript(script) do
-          {:ok, _} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
+      not is_binary(text) or text == "" ->
+        {:error, Error.execution_error("Message text must be a non-empty string")}
 
-      {:error, reason} ->
-        {:error, reason}
+      not is_list(opts) or not Keyword.keyword?(opts) ->
+        {:error, Error.execution_error("Message options must be a keyword list")}
+
+      true ->
+        validate_delivery_options(opts)
+    end
+  end
+
+  defp validate_delivery_options(opts) do
+    cond do
+      Keyword.get(opts, :service, :auto) != :auto ->
+        {:error, Error.execution_error("Explicit Messages service selection is not supported; use service: :auto")}
+
+      not is_boolean(Keyword.get(opts, :group_chat, false)) ->
+        {:error, Error.execution_error("The group_chat option must be a boolean")}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp send_script(script) do
+    case adapter().run_applescript(script) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Never send if the chat lookup is malformed, missing, or ambiguous.
+  @spec send_to_group_chat(String.t(), String.t()) :: :ok | {:error, Error.t()}
+  defp send_to_group_chat(participant_names, text) do
+    with {:ok, chat_id} <- find_group_chat_by_participants(participant_names) do
+      send_script(build_group_message_script(chat_id, participant_names, text))
     end
   end
 
@@ -369,14 +371,17 @@ defmodule ExMacOSControl.Messages do
   defp find_group_chat_by_participants(participant_names) do
     case list_chats() do
       {:ok, chats} ->
-        matching_chat = Enum.find(chats, fn chat -> chat.name == participant_names end)
+        matching_chats = Enum.filter(chats, fn chat -> chat.name == participant_names end)
 
-        case matching_chat do
-          nil ->
+        case matching_chats do
+          [] ->
             {:error, Error.not_found("Group chat not found with participants: #{participant_names}")}
 
-          chat ->
+          [chat] ->
             {:ok, chat.id}
+
+          _ ->
+            {:error, Error.execution_error("Multiple chats match the recipient; refusing to send")}
         end
 
       {:error, reason} ->
@@ -387,74 +392,52 @@ defmodule ExMacOSControl.Messages do
   # Private helper to escape quotes in strings
   @spec escape_quotes(String.t()) :: String.t()
   defp escape_quotes(str) do
-    String.replace(str, "\"", "\\\"")
+    ExMacOSControl.Script.escape_string(str)
   end
 
-  # Build the send_message AppleScript based on service
-  @spec build_send_message_script(String.t(), String.t(), atom(), boolean()) :: String.t()
-  defp build_send_message_script(recipient, text, _service, is_chat_id) do
-    # Note: The service parameter is currently ignored because the simpler
-    # "send to buddy" syntax doesn't support service selection.
-    # Messages will automatically choose iMessage or SMS based on availability.
-    # To force a specific service, you would need Full Disk Access and direct
-    # database manipulation, or use the more complex participant/service API
-    # which has compatibility issues.
-
-    if is_chat_id do
-      """
-      tell application "Messages"
-        set targetChat to chat id "#{escape_quotes(recipient)}"
-        send "#{escape_quotes(text)}" to targetChat
-      end tell
-      """
-    else
-      """
-      tell application "Messages"
-        send "#{escape_quotes(text)}" to buddy "#{escape_quotes(recipient)}"
-      end tell
-      """
-    end
+  @spec build_send_message_script(String.t(), String.t()) :: String.t()
+  defp build_send_message_script(recipient, text) do
+    """
+    tell application "Messages"
+      send "#{escape_quotes(text)}" to buddy "#{escape_quotes(recipient)}"
+    end tell
+    """
   end
 
-  # Parses messages from AppleScript output
-  @spec parse_messages(String.t()) :: [map()]
-  defp parse_messages(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.map(&parse_message_line/1)
+  # Recheck the complete destination immediately before sending, not just its first participant.
+  defp build_group_message_script(chat_id, participant_names, text) do
+    """
+    tell application "Messages"
+      set targetChat to chat id "#{escape_quotes(chat_id)}"
+      set targetParticipants to participants of targetChat
+      if (count of targetParticipants) < 2 then error "Destination is not a group chat"
+      set targetNames to ""
+      repeat with chatParticipant in targetParticipants
+        set participantName to full name of chatParticipant
+        if participantName is "" or participantName is missing value then
+          set participantName to id of chatParticipant
+        end if
+        if targetNames is not "" then set targetNames to targetNames & " & "
+        set targetNames to targetNames & participantName
+      end repeat
+      if targetNames is not "#{escape_quotes(participant_names)}" then error "Group participants changed; refusing to send"
+      send "#{escape_quotes(text)}" to targetChat
+    end tell
+    """
   end
 
-  # Parses a single message line
-  @spec parse_message_line(String.t()) :: map()
-  defp parse_message_line(line) do
-    [from, text, timestamp] = String.split(line, "|", parts: 3)
+  defp chat_from_row([id, name]), do: %{id: id, name: name, unread: nil}
+  defp invalid_chat_row?([id, _name]), do: String.trim(id) == ""
 
-    %{
-      from: String.trim(from),
-      text: String.trim(text),
-      timestamp: String.trim(timestamp)
-    }
-  end
-
-  # Parses chats from AppleScript output
-  @spec parse_chats(String.t()) :: [map()]
-  defp parse_chats(""), do: []
-
+  # Keep malformed data from crashing the caller or triggering a group send.
+  @spec parse_chats(String.t()) :: {:ok, [map()]} | {:error, Error.t()}
   defp parse_chats(output) do
-    output
-    |> String.split(",", trim: true)
-    |> Enum.map(&parse_chat_line/1)
-  end
-
-  # Parses a single chat line
-  @spec parse_chat_line(String.t()) :: map()
-  defp parse_chat_line(line) do
-    [id, name, unread] = String.split(line, "|", parts: 3)
-
-    %{
-      id: String.trim(id),
-      name: String.trim(name),
-      unread: String.trim(unread) |> String.to_integer()
-    }
+    with {:ok, rows} <- ScriptOutput.decode(output, 2) do
+      if Enum.any?(rows, &invalid_chat_row?/1) do
+        {:error, Error.execution_error("Invalid structured chat output")}
+      else
+        {:ok, Enum.map(rows, &chat_from_row/1)}
+      end
+    end
   end
 end

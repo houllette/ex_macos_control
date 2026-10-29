@@ -20,7 +20,7 @@ defmodule ExMacOSControl.PermissionsTest do
     test "returns :granted when permission is granted" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "System Events"
-        assert script =~ "set frontmost to true"
+        assert script =~ "UI elements enabled"
         {:ok, "granted"}
       end)
 
@@ -51,12 +51,20 @@ defmodule ExMacOSControl.PermissionsTest do
       assert {:error, %Error{type: :execution_error}} = Permissions.check_accessibility()
     end
 
+    test "recognizes structured permission errors without relying on English text" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, %Error{type: :permission_denied, message: "Zugriff verweigert"}}
+      end)
+
+      assert {:ok, :not_granted} = Permissions.check_accessibility()
+    end
+
     test "generates correct AppleScript for accessibility check" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "tell application \"System Events\""
-        assert script =~ "set frontmost to true"
+        assert script =~ "UI elements enabled"
         assert script =~ "return \"granted\""
-        assert script =~ "not allowed assistive access"
+        refute script =~ "set frontmost"
         {:ok, "granted"}
       end)
 
@@ -117,6 +125,14 @@ defmodule ExMacOSControl.PermissionsTest do
       assert {:error, %Error{}} = Permissions.check_automation("App")
     end
 
+    test "recognizes structured automation permission errors without relying on English text" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, %Error{type: :permission_denied, message: "Zugriff verweigert"}}
+      end)
+
+      assert {:ok, :not_granted} = Permissions.check_automation("Safari")
+    end
+
     test "generates correct AppleScript for automation check" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "tell application \"Mail\""
@@ -124,6 +140,8 @@ defmodule ExMacOSControl.PermissionsTest do
         assert script =~ "return \"granted\""
         assert script =~ "not allowed"
         assert script =~ "not authorized"
+        assert script =~ "on error errMsg number errNum"
+        assert script =~ "error errMsg number errNum"
         {:ok, "granted"}
       end)
 

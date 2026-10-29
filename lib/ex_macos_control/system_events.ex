@@ -74,7 +74,7 @@ defmodule ExMacOSControl.SystemEvents do
   - File operation paths must be absolute (start with `/`)
   """
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -105,12 +105,21 @@ defmodule ExMacOSControl.SystemEvents do
   """
   @spec list_processes() :: {:ok, [String.t()]} | {:error, Error.t()}
   def list_processes do
-    script = ~s(tell application "System Events" to return name of every application process)
+    script = """
+    tell application "System Events"
+      set processNames to name of every application process
+      set processRows to {}
+      repeat with processName in processNames
+        set end of processRows to {contents of processName}
+      end repeat
+      return my exmc_encode_rows(processRows)
+    end tell
+    #{ScriptOutput.handlers()}
+    """
 
     case adapter().run_applescript(script) do
       {:ok, output} ->
-        processes = parse_process_list(output)
-        {:ok, processes}
+        decode_list(output)
 
       {:error, reason} ->
         {:error, reason}
@@ -665,16 +674,16 @@ defmodule ExMacOSControl.SystemEvents do
       set selectedItems to selection
       set itemPaths to {}
       repeat with anItem in selectedItems
-        set end of itemPaths to POSIX path of (anItem as alias)
+        set end of itemPaths to {POSIX path of (anItem as alias)}
       end repeat
-      return itemPaths
+      return my exmc_encode_rows(itemPaths)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
       {:ok, output} ->
-        paths = parse_path_list(output)
-        {:ok, paths}
+        decode_list(output)
 
       {:error, reason} ->
         {:error, reason}
@@ -741,15 +750,6 @@ defmodule ExMacOSControl.SystemEvents do
 
   ## Private Helpers
 
-  # Parses a comma-separated list of processes from AppleScript output
-  @spec parse_process_list(String.t()) :: [String.t()]
-  defp parse_process_list(output) do
-    output
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
   # Parses a boolean result from AppleScript output
   @spec parse_boolean(String.t()) :: boolean()
   defp parse_boolean(output) do
@@ -766,7 +766,7 @@ defmodule ExMacOSControl.SystemEvents do
   # Escapes double quotes in application names for AppleScript
   @spec escape_quotes(String.t()) :: String.t()
   defp escape_quotes(string) do
-    String.replace(string, "\"", "\\\"")
+    ExMacOSControl.Script.escape_string(string)
   end
 
   # Maps Elixir modifier atoms to AppleScript modifier syntax
@@ -801,23 +801,20 @@ defmodule ExMacOSControl.SystemEvents do
   defp parse_window_properties(output) do
     parts = String.split(output, ", ", parts: 5)
 
-    case parts do
-      [x, y, width, height, title] ->
-        {:ok,
-         %{
-           position: [String.to_integer(x), String.to_integer(y)],
-           size: [String.to_integer(width), String.to_integer(height)],
-           title: String.trim(title)
-         }}
-
-      _ ->
-        {:error, Error.execution_error("Failed to parse window properties", output: output)}
+    with [x, y, width, height, title] <- parts,
+         {x, ""} <- Integer.parse(x),
+         {y, ""} <- Integer.parse(y),
+         {width, ""} <- Integer.parse(width),
+         {height, ""} <- Integer.parse(height) do
+      {:ok, %{position: [x, y], size: [width, height], title: String.trim(title)}}
+    else
+      _ -> {:error, Error.execution_error("Failed to parse window properties", output: output)}
     end
   end
 
   # Validates position parameter
   @spec validate_position([integer()]) :: :ok | {:error, Error.t()}
-  defp validate_position([_x, _y]), do: :ok
+  defp validate_position([x, y]) when is_integer(x) and is_integer(y), do: :ok
 
   defp validate_position(_) do
     {:error, Error.execution_error("Invalid position format, expected [x, y]")}
@@ -825,7 +822,8 @@ defmodule ExMacOSControl.SystemEvents do
 
   # Validates size parameter
   @spec validate_size([integer()]) :: :ok | {:error, Error.t()}
-  defp validate_size([_width, _height]), do: :ok
+  defp validate_size([width, height]) when is_integer(width) and is_integer(height) and width > 0 and height > 0,
+    do: :ok
 
   defp validate_size(_) do
     {:error, Error.execution_error("Invalid size format, expected [width, height]")}
@@ -845,12 +843,10 @@ defmodule ExMacOSControl.SystemEvents do
     {:error, Error.execution_error("Path must be a string")}
   end
 
-  # Parses a comma-separated list of paths from AppleScript output
-  @spec parse_path_list(String.t()) :: [String.t()]
-  defp parse_path_list(output) do
-    output
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
+  @spec decode_list(String.t()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  defp decode_list(output) do
+    with {:ok, rows} <- ScriptOutput.decode(output, 1) do
+      {:ok, List.flatten(rows)}
+    end
   end
 end

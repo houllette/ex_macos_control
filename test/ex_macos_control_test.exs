@@ -7,14 +7,16 @@ defmodule ExMacosControlTest do
 
   setup :verify_on_exit!
 
-  # Set up a stub for doctests that might run
-  setup do
-    # Allow doctests to call the adapter without explicit expectations
-    Mox.stub_with(ExMacOSControl.AdapterMock, ExMacOSControl.OSAScriptAdapter)
+  # Native documentation examples are opt-in, never part of the unit suite.
+  setup context do
+    if context[:integration] do
+      Mox.stub_with(ExMacOSControl.AdapterMock, ExMacOSControl.OSAScriptAdapter)
+    end
+
     :ok
   end
 
-  doctest ExMacOSControl
+  doctest ExMacOSControl, tags: [:integration]
 
   describe "facade functions" do
     test "exposes run_shortcut/1 and run_applescript/1" do

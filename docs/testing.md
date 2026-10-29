@@ -51,15 +51,34 @@ test/
 mix test
 ```
 
-Integration tests are excluded by default.
+Integration, desktop-mutating, and Shortcut execution tests are excluded by default.
+The adapter command tests use a temporary fake `osascript` executable and do not
+invoke macOS applications.
 
-### Run All Tests (Including Integration)
+### Run Native Integration Tests
 
 ```bash
 mix test --include integration
 ```
 
-**Note**: Integration tests require macOS with `osascript` available.
+**Note**: Integration tests require macOS with `osascript` available. This command
+does not enable desktop-mutating tests or execute user Shortcuts.
+
+Desktop-mutating tests require explicit opt-in and should only run in an isolated
+macOS session: they can close existing tabs, move windows, and quit applications.
+
+```bash
+mix test --include integration --include desktop
+```
+
+Shortcut execution tests additionally require a dedicated, harmless Shortcut that
+returns its input. Never point these tests at an arbitrary user Shortcut.
+
+```bash
+TEST_SHORTCUT_NAME=Echo mix test --include integration --include shortcut test/integration/shortcuts_integration_test.exs
+```
+
+Mail and Messages tests retain their separate `:skip` safety tags.
 
 ### Run Specific Test File
 

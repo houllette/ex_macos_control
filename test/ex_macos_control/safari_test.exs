@@ -1,5 +1,6 @@
 defmodule ExMacOSControl.SafariTest do
   use ExUnit.Case, async: true
+  import ExMacOSControl.TestHelpers, only: [script_output: 1]
   import Mox
 
   alias ExMacOSControl.Error
@@ -128,7 +129,7 @@ defmodule ExMacOSControl.SafariTest do
         assert script =~ "Safari"
         assert script =~ "windows"
         assert script =~ "tabs"
-        {:ok, "https://example.com, https://google.com, https://github.com"}
+        {:ok, script_output([["https://example.com"], ["https://google.com"], ["https://github.com"]])}
       end)
 
       assert {:ok, urls} = Safari.list_tabs()
@@ -137,33 +138,36 @@ defmodule ExMacOSControl.SafariTest do
 
     test "returns empty list when no tabs" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Safari.list_tabs()
     end
 
-    test "parses comma-separated URLs correctly" do
+    test "parses multiple structured URLs correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "https://example.com,https://google.com"}
+        {:ok, script_output([["https://example.com"], ["https://google.com"]])}
       end)
 
       assert {:ok, urls} = Safari.list_tabs()
       assert urls == ["https://example.com", "https://google.com"]
     end
 
-    test "trims whitespace from URLs" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, " https://example.com , https://google.com  "}
+    test "preserves commas and pipes within URLs" do
+      urls = ["https://example.com/a,b?x=one,two|three", "data:text/plain,hello"]
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(urlList)"
+        assert script =~ "is not missing value"
+        {:ok, script_output(Enum.map(urls, &[&1]))}
       end)
 
-      assert {:ok, urls} = Safari.list_tabs()
-      assert urls == ["https://example.com", "https://google.com"]
+      assert {:ok, ^urls} = Safari.list_tabs()
     end
 
     test "handles single tab" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "https://example.com"}
+        {:ok, script_output([["https://example.com"]])}
       end)
 
       assert {:ok, ["https://example.com"]} = Safari.list_tabs()
@@ -185,6 +189,8 @@ defmodule ExMacOSControl.SafariTest do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "Safari"
         assert script =~ "close tab 2"
+        assert script =~ ~s(error "Tab index is out of bounds" number -1719)
+        assert script =~ ~s(error "No Safari windows are open" number -1728)
         assert script =~ "front window"
         {:ok, ""}
       end)

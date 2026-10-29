@@ -1,5 +1,6 @@
 defmodule ExMacOSControl.MailTest do
   use ExUnit.Case, async: true
+  import ExMacOSControl.TestHelpers, only: [script_output: 1]
   import Mox
 
   alias ExMacOSControl.Error
@@ -8,6 +9,29 @@ defmodule ExMacOSControl.MailTest do
   setup :verify_on_exit!
 
   describe "send_email/1" do
+    test "rejects malformed recipients and text without executing a send" do
+      valid = [to: "recipient@example.com", subject: "Subject", body: "Body"]
+
+      for recipients <- [[nil], [false], [:valid], "cc@example.com", %{}], key <- [:cc, :bcc] do
+        assert {:error, %Error{type: :execution_error}} =
+                 Mail.send_email(Keyword.put(valid, key, recipients))
+      end
+
+      for key <- [:subject, :body], value <- [42, [], %{}] do
+        assert {:error, %Error{type: :execution_error}} =
+                 Mail.send_email(Keyword.put(valid, key, value))
+      end
+    end
+
+    test "escapes message content containing backslashes and quotes" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ ~S(content:"Path\\\"Quoted")
+        {:ok, ""}
+      end)
+
+      assert :ok = Mail.send_email(to: "recipient@example.com", subject: "Subject", body: ~S(Path\"Quoted))
+    end
+
     test "sends email with required fields" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "Mail"
@@ -251,6 +275,13 @@ defmodule ExMacOSControl.MailTest do
       assert {:ok, 123} = Mail.get_unread_count()
     end
 
+    test "rejects trailing junk and negative unread counts" do
+      for output <- ["12junk", "12 messages", "-1"] do
+        expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, output} end)
+        assert {:error, %Error{type: :execution_error}} = Mail.get_unread_count()
+      end
+    end
+
     test "handles non-integer output" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
         {:ok, "not a number"}
@@ -320,7 +351,12 @@ defmodule ExMacOSControl.MailTest do
         assert script =~ "messages of mailbox"
         assert script =~ "INBOX"
         assert script =~ "invoice"
-        {:ok, "Invoice #123|billing@example.com|2025-01-15,Re: Invoice|support@example.com|2025-01-14"}
+
+        {:ok,
+         script_output([
+           ["Invoice #123", "billing@example.com", "2025-01-15"],
+           ["Re: Invoice", "support@example.com", "2025-01-14"]
+         ])}
       end)
 
       assert {:ok, messages} = Mail.search_mailbox("INBOX", "invoice")
@@ -339,11 +375,29 @@ defmodule ExMacOSControl.MailTest do
              }
     end
 
+    test "preserves delimiters, multiline content and locale-formatted dates" do
+      subject = "  Invoice, January | revised\nline two  "
+      from = "Doe, Jane <jane@example.com>"
+      date = "Monday, January 15, 2024 at 2:30 PM"
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(results)"
+        {:ok, script_output([[subject, from, date]])}
+      end)
+
+      assert {:ok, [%{subject: ^subject, from: ^from, date: ^date}]} = Mail.search_mailbox("INBOX", "Invoice")
+    end
+
+    test "rejects malformed search output rather than dropping records" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, "private|sender"} end)
+      assert {:error, %Error{type: :execution_error}} = Mail.search_mailbox("INBOX", "test")
+    end
+
     test "returns empty list when no matches" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "INBOX"
         assert script =~ "nonexistent"
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Mail.search_mailbox("INBOX", "nonexistent")
@@ -372,7 +426,7 @@ defmodule ExMacOSControl.MailTest do
     test "escapes quotes in mailbox name" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "\\\""
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Mail.search_mailbox("My \"Special\" Mailbox", "test")
@@ -381,7 +435,7 @@ defmodule ExMacOSControl.MailTest do
     test "escapes quotes in search term" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "\\\""
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Mail.search_mailbox("INBOX", "\"quoted\" search")
@@ -389,7 +443,7 @@ defmodule ExMacOSControl.MailTest do
 
     test "parses single result correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "Test Subject|sender@example.com|2025-01-15"}
+        {:ok, script_output([["Test Subject", "sender@example.com", "2025-01-15"]])}
       end)
 
       assert {:ok, [message]} = Mail.search_mailbox("INBOX", "test")

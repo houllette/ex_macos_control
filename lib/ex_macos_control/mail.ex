@@ -49,7 +49,7 @@ defmodule ExMacOSControl.Mail do
   - Implementing rate limiting if sending multiple emails
   """
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -255,16 +255,18 @@ defmodule ExMacOSControl.Mail do
         set msgSubject to subject of aMessage
         set msgFrom to sender of aMessage
         set msgDate to date received of aMessage as text
-        set end of results to msgSubject & "|" & msgFrom & "|" & msgDate
+        set end of results to {msgSubject, msgFrom, msgDate}
       end repeat
-      return results as text
+      return my exmc_encode_rows(results)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
       {:ok, output} ->
-        messages = parse_search_results(output)
-        {:ok, messages}
+        with {:ok, rows} <- ScriptOutput.decode(output, 3) do
+          {:ok, Enum.map(rows, fn [subject, from, date] -> %{subject: subject, from: from, date: date} end)}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -285,10 +287,18 @@ defmodule ExMacOSControl.Mail do
 
     case missing_field do
       nil ->
-        :ok
+        validate_message_text(opts)
 
       field ->
         {:error, Error.execution_error("Missing required field", field: field)}
+    end
+  end
+
+  defp validate_message_text(opts) do
+    if is_binary(opts[:subject]) and is_binary(opts[:body]) do
+      :ok
+    else
+      {:error, Error.execution_error("Subject and body must be strings")}
     end
   end
 
@@ -305,15 +315,17 @@ defmodule ExMacOSControl.Mail do
   # Validates a list of email addresses
   @spec validate_email_list(list(String.t())) :: :ok | {:error, Error.t()}
   defp validate_email_list(emails) when is_list(emails) do
-    invalid_email = Enum.find(emails, &(not valid_email?(&1)))
-
-    case invalid_email do
+    case Enum.find_index(emails, &(not valid_email?(&1))) do
       nil ->
         :ok
 
-      email ->
-        {:error, Error.execution_error("Invalid email address", address: email)}
+      index ->
+        {:error, Error.execution_error("Invalid email address", address: Enum.at(emails, index))}
     end
+  end
+
+  defp validate_email_list(emails) do
+    {:error, Error.execution_error("Recipients must be a list of email addresses", recipients: emails)}
   end
 
   # Basic email validation
@@ -366,7 +378,7 @@ defmodule ExMacOSControl.Mail do
     output = String.trim(output)
 
     case Integer.parse(output) do
-      {count, _} when count >= 0 ->
+      {count, ""} when count >= 0 ->
         {:ok, count}
 
       _ ->
@@ -374,38 +386,9 @@ defmodule ExMacOSControl.Mail do
     end
   end
 
-  # Parses search results from AppleScript output
-  @spec parse_search_results(String.t()) :: [map()]
-  defp parse_search_results(""), do: []
-
-  defp parse_search_results(output) do
-    output
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&parse_message/1)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  # Parses a single message result
-  @spec parse_message(String.t()) :: map() | nil
-  defp parse_message(message_string) do
-    case String.split(message_string, "|") do
-      [subject, from, date] ->
-        %{
-          subject: String.trim(subject),
-          from: String.trim(from),
-          date: String.trim(date)
-        }
-
-      _ ->
-        nil
-    end
-  end
-
   # Escapes double quotes in strings for AppleScript
   @spec escape_quotes(String.t()) :: String.t()
   defp escape_quotes(string) do
-    String.replace(string, "\"", "\\\"")
+    ExMacOSControl.Script.escape_string(string)
   end
 end
