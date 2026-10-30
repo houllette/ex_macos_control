@@ -177,7 +177,7 @@ defmodule ExMacOSControl.Notes do
 
   defp do_create_and_show(attrs, opts) do
     with {:ok, id} <-
-           Composition.step(:create_note, fn -> create_note(attrs, Keyword.take(opts, [:folder_id])) end),
+           Composition.effect(:create_note, fn -> create_note(attrs, Keyword.take(opts, [:folder_id])) end),
          :ok <- Composition.step(:show_note, fn -> show_note(id, Keyword.take(opts, [:separately])) end) do
       {:ok, id}
     end
@@ -185,7 +185,7 @@ defmodule ExMacOSControl.Notes do
 
   defp do_duplicate_note(id, opts) do
     with {:ok, note} <- Composition.step(:read_note, fn -> get_note(id) end) do
-      Composition.step(:create_note, fn ->
+      Composition.effect(:create_note, fn ->
         create_note(
           [title: Keyword.get(opts, :title, note.title), body: note.body],
           Keyword.take(opts, [:folder_id])

@@ -5,7 +5,15 @@ defmodule ExMacOSControl.Composition do
   `run/2` gives all steps one monotonic time budget (30 seconds by default).
   Nested runs cannot extend an enclosing deadline. Callbacks execute in the
   caller process; arbitrary Elixir code is cooperative, not forcibly cancelled.
-  Child processes do not inherit the scope.
+  Child processes require capture_context/0 and with_context/2; join them before
+  the originating run returns when sharing a journal.
+
+  Options include trace_to (PID), journal (private directory), and run_id (32 hex
+  characters). Trace messages are {:ex_macos_control, event}. Events contain step
+  names, timing, outcomes and declared resource IDs, never arbitrary results.
+  Journaling failures prevent dispatch; inspect incomplete runs with
+  ExMacOSControl.Composition.Journal.inspect_run/1. :acknowledged means a command
+  returned successfully; verify/3 records :confirmed after observing state.
 
   `step/2` never retries. Errors retain their original type and outcome, and add
   `details.composition` with the failed step and acknowledged completed results.
@@ -16,37 +24,87 @@ defmodule ExMacOSControl.Composition do
   after work times out. Cleanup failures are reported with the resource identity.
   Exceptions and throws from callbacks are re-raised after cleanup.
   """
-  alias ExMacOSControl.{Automation, Error}
+  alias ExMacOSControl.{Automation, Error, Wait}
+  alias ExMacOSControl.Composition.{Context, Journal, Trace}
 
   @key {__MODULE__, :context}
   @execution [:timeout, :max_output_bytes]
 
   @doc "Runs a composition with a finite shared deadline and restores the enclosing scope."
   def run(fun, opts \\ []) when is_function(fun, 0) do
-    with :ok <- Automation.options(opts, @execution),
-         effective = ExMacOSControl.execution_options(opts),
+    with :ok <- Automation.options(opts, @execution ++ [:trace_to, :journal, :run_id]),
+         :ok <- trace_options(opts),
+         effective = ExMacOSControl.execution_options(Keyword.take(opts, @execution)),
          timeout = Keyword.get(effective, :timeout, 30_000),
          true <- is_integer(timeout) and timeout >= 0 do
-      previous = Process.get(@key)
-      deadline = System.monotonic_time(:millisecond) + timeout
-      deadline = if previous, do: min(deadline, previous.deadline), else: deadline
-      Process.put(@key, %{deadline: deadline, completed: []})
-
-      try do
-        ExMacOSControl.with_options(Keyword.take(effective, @execution), fun)
-      after
-        restore(previous)
-      end
+      run_scoped(fun, timeout, effective, opts)
     else
       {:error, _} = error -> error
       _ -> Automation.invalid("Compositions require a finite non-negative timeout")
     end
   end
 
+  defp run_scoped(fun, timeout, effective, opts) do
+    previous = Process.get(@key)
+    run_id = if previous, do: previous.run_id, else: Keyword.get(opts, :run_id, Trace.id())
+
+    with {:ok, journal} <- open_journal(previous, opts, run_id) do
+      deadline = System.monotonic_time(:millisecond) + timeout
+
+      context = %Context{
+        deadline: if(previous, do: min(deadline, previous.deadline), else: deadline),
+        run_id: run_id,
+        journal: journal,
+        trace_to: Keyword.get(opts, :trace_to, previous && previous.trace_to),
+        span_id: previous && previous.span_id,
+        execution: Keyword.take(effective, @execution)
+      }
+
+      Process.put(@key, context)
+
+      try do
+        Trace.run(
+          context,
+          fn -> ExMacOSControl.with_options(Keyword.take(effective, @execution), fun) end,
+          is_nil(previous)
+        )
+      after
+        restore(previous)
+      end
+    end
+  end
+
+  defp open_journal(nil, opts, run_id), do: Journal.open(opts[:journal], run_id)
+
+  defp open_journal(previous, opts, _run_id) do
+    if Keyword.has_key?(opts, :journal) or Keyword.has_key?(opts, :run_id),
+      do: Automation.invalid("Nested runs inherit the enclosing journal and run ID"),
+      else: {:ok, previous.journal}
+  end
+
+  defp trace_options(opts) do
+    cond do
+      not is_nil(opts[:trace_to]) and not is_pid(opts[:trace_to]) ->
+        Automation.invalid("trace_to must be a PID")
+
+      not is_nil(opts[:journal]) and not is_binary(opts[:journal]) ->
+        Automation.invalid("journal must be a directory path")
+
+      not is_nil(opts[:run_id]) and not (is_binary(opts[:run_id]) and Regex.match?(~r/\A[0-9a-f]{32}\z/, opts[:run_id])) ->
+        Automation.invalid("run_id must contain 32 lowercase hexadecimal characters")
+
+      true ->
+        :ok
+    end
+  end
+
   @doc "Executes one named step, stopping before dispatch if the shared budget is exhausted."
   def step(name, fun) when is_function(fun, 0) do
-    result = guard(fun)
+    result = Trace.step(Context.current(), name, fun, :operation, nil)
+    normalize_step(result, name)
+  end
 
+  defp normalize_step(result, name) do
     case result do
       {:error, reason} ->
         annotate(reason, name)
@@ -66,6 +124,55 @@ defmodule ExMacOSControl.Composition do
 
   @doc "Executes a named step using a function capture and its argument list."
   def step(name, fun, args) when is_function(fun) and is_list(args), do: step(name, fn -> apply(fun, args) end)
+
+  @doc "Records an effect and optional resource type without retrying its callback."
+  def effect(name, fun, opts \\ [])
+
+  def effect(name, fun, opts) when is_function(fun, 0) do
+    with :ok <- Automation.options(opts, [:resource]),
+         true <- is_nil(opts[:resource]) or is_atom(opts[:resource]) do
+      Trace.step(Context.current(), name, fun, :effect, opts[:resource]) |> normalize_step(name)
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Resource type must be an atom")
+    end
+  end
+
+  def effect(name, fun, args) when is_function(fun) and is_list(args),
+    do: effect(name, fn -> apply(fun, args) end)
+
+  @doc "Polls observable state and records a confirmed outcome only after the predicate succeeds."
+  def verify(name, predicate, opts \\ []) do
+    with :ok <- Automation.options(opts, [:timeout, :interval]) do
+      run(&verify_state/3, [name, predicate, opts], Keyword.take(opts, [:timeout]))
+    end
+  end
+
+  defp verify_state(name, predicate, opts) do
+    Trace.step(Context.current(), name, fn -> Wait.until(predicate, opts) end, :verification, nil)
+    |> normalize_step(name)
+  end
+
+  @doc "Captures deadline and tracing context for explicit propagation to a joined Task."
+  def capture_context do
+    case Context.current() do
+      nil -> nil
+      context -> %{context | completed: []}
+    end
+  end
+
+  @doc "Runs under captured context, without inheriting foreground locks or extending deadlines."
+  def with_context(%Context{} = context, fun) when is_function(fun, 0) do
+    previous = Context.current()
+    deadline = if previous, do: min(context.deadline, previous.deadline), else: context.deadline
+    Process.put(@key, %{context | deadline: deadline, completed: []})
+
+    try do
+      ExMacOSControl.with_options(context.execution, fn -> guard(fun) end)
+    after
+      restore(previous)
+    end
+  end
 
   @doc false
   def run(fun, args, opts) when is_function(fun) and is_list(args), do: run(fn -> apply(fun, args) end, opts)
@@ -185,10 +292,13 @@ defmodule ExMacOSControl.Composition do
 
   defp cleanup(fun) do
     previous = Process.get(@key)
-    Process.delete(@key)
+
+    if previous do
+      Process.put(@key, %{previous | deadline: System.monotonic_time(:millisecond) + 5000, completed: []})
+    end
 
     try do
-      run(fn -> step(:cleanup, fun) end, timeout: 5000)
+      ExMacOSControl.with_options([timeout: 5000], fn -> step(:cleanup, fun) end)
     catch
       kind, _reason -> {:error, Error.execution_error("Resource cleanup raised", kind: kind)}
     after

@@ -1,7 +1,7 @@
 defmodule ExMacOSControl.CompositionLiveSession do
   @moduledoc false
   import ExUnit.Assertions
-  alias ExMacOSControl.{Automation, DesktopSession, OSAScriptAdapter}
+  alias ExMacOSControl.{Automation, Composition, DesktopSession, OSAScriptAdapter}
   alias ExMacOSControl.Qualification.Host
 
   def start(context) do
@@ -24,7 +24,7 @@ defmodule ExMacOSControl.CompositionLiveSession do
 
   def effect(session, name, fun) do
     event(session, "intent", %{operation: name})
-    result = fun.()
+    result = Composition.run(fn -> Composition.effect(name, fun) end, journal: Path.join(session.root, "execution"))
     event(session, "acknowledged", %{operation: name, result: inspect(result, limit: 5, printable_limit: 200)})
     result
   end

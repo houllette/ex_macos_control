@@ -82,7 +82,7 @@ defmodule ExMacOSControl.Applications do
 
   defp ensure(app) do
     with :ok <-
-           Composition.step(:launch_application, fn ->
+           Composition.effect(:launch_application, fn ->
              Automation.action(nil, "Application(input.id).launch();", %{id: app.bundle_id})
            end),
          :ok <- wait_status(app.bundle_id, true) do
@@ -94,7 +94,7 @@ defmodule ExMacOSControl.Applications do
 
   defp quit(app) do
     with :ok <-
-           Composition.step(:quit_application, fn ->
+           Composition.effect(:quit_application, fn ->
              Automation.action(nil, "Application(input.id).quit();", %{id: app.bundle_id})
            end),
          do: wait_status(app.bundle_id, false)
@@ -170,7 +170,7 @@ defmodule ExMacOSControl.Applications do
 
   defp do_activate(identity) do
     with {:ok, app} <- ensure_running(identity),
-         :ok <- Composition.step(:activate_application, fn -> focus(app.pid) end) do
+         :ok <- Composition.effect(:activate_application, fn -> focus(app.pid) end) do
       {:ok, app}
     end
   end

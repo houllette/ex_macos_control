@@ -300,7 +300,7 @@ defmodule ExMacOSControl.Calendar do
   end
 
   defp do_create_event_with_alarms(calendar_id, attrs, alarms) do
-    with {:ok, id} <- Composition.step(:create_event, fn -> create_event(calendar_id, attrs) end),
+    with {:ok, id} <- Composition.effect(:create_event, fn -> create_event(calendar_id, attrs) end),
          {:ok, indices} <-
            Composition.map(alarms, :create_alarm, fn {type, attributes} ->
              create_alarm(calendar_id, id, type, attributes)

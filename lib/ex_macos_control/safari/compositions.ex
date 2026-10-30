@@ -204,7 +204,7 @@ defmodule ExMacOSControl.Safari.Compositions do
            Composition.step(:navigation_marker, fn ->
              dom(page, "window.__exmc_navigation=input.token;return location.href;", %{token: token})
            end),
-         :ok <- Composition.step(:navigate_page, fn -> Safari.navigate(page.window_id, page.tab_index, url) end) do
+         :ok <- Composition.effect(:navigate_page, fn -> Safari.navigate(page.window_id, page.tab_index, url) end) do
       same_document = hd(String.split(previous, "#", parts: 2)) == hd(String.split(url, "#", parts: 2))
 
       poll(
@@ -261,7 +261,7 @@ defmodule ExMacOSControl.Safari.Compositions do
   end
 
   defp do_open_page(url) do
-    Composition.step(:open_page, fn ->
+    Composition.effect(:open_page, fn ->
       source = """
       on run argv
         tell application id "com.apple.Safari"
@@ -298,7 +298,7 @@ defmodule ExMacOSControl.Safari.Compositions do
   defp do_fill(page, selector, value, opts) do
     with :ok <- wait_interactable(page, selector, true, Keyword.take(opts, [:interval])),
          :ok <-
-           Composition.step(:fill_field, fn ->
+           Composition.effect(:fill_field, fn ->
              dom_action(
                page,
                element() <>
@@ -330,7 +330,7 @@ defmodule ExMacOSControl.Safari.Compositions do
 
   defp do_click(page, selector, opts) do
     with :ok <- wait_interactable(page, selector, false, Keyword.take(opts, [:interval])) do
-      Composition.step(:click_element, fn ->
+      Composition.effect(:click_element, fn ->
         dom_action(page, element() <> "if(e.disabled)throw new Error('Element is disabled');e.click();", %{
           selector: selector
         })

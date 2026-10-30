@@ -55,7 +55,7 @@ defmodule ExMacOSControl.Workflows do
     with :ok <- mail_options(mail_options) do
       Finder.with_selection(
         fn paths ->
-          Composition.step(:create_draft, &Mail.create_draft/1, [Keyword.put(mail_options, :attachments, paths)])
+          Composition.effect(:create_draft, &Mail.create_draft/1, [Keyword.put(mail_options, :attachments, paths)])
         end,
         opts
       )
@@ -288,19 +288,19 @@ defmodule ExMacOSControl.Workflows do
 
   defp send_page(chat_id) do
     with {:ok, page} <- capture_page() do
-      Composition.step(:send_message, &Messages.send_to_chat/2, [chat_id, page.url <> "\n\n" <> page.selection])
+      Composition.effect(:send_message, &Messages.send_to_chat/2, [chat_id, page.url <> "\n\n" <> page.selection])
     end
   end
 
   defp send_clipboard(chat_id) do
     with {:ok, text} <- Composition.step(:read_clipboard, &StandardAdditions.clipboard/0) do
-      Composition.step(:send_message, &Messages.send_to_chat/2, [chat_id, text])
+      Composition.effect(:send_message, &Messages.send_to_chat/2, [chat_id, text])
     end
   end
 
   defp create_reminder(list_id, title, body, opts) do
     attrs = opts |> Keyword.take(@reminder) |> Keyword.put_new(:title, title) |> Keyword.put(:body, body)
-    Composition.step(:create_reminder, fn -> Reminders.create_reminder(list_id, attrs) end)
+    Composition.effect(:create_reminder, fn -> Reminders.create_reminder(list_id, attrs) end)
   end
 
   defp read_message(account, mailbox, id),
@@ -313,7 +313,7 @@ defmodule ExMacOSControl.Workflows do
 
   defp maybe_complete(id, opts) do
     if opts[:complete_reminder],
-      do: Composition.step(:complete_reminder, fn -> Reminders.complete_reminder(id) end),
+      do: Composition.effect(:complete_reminder, fn -> Reminders.complete_reminder(id) end),
       else: :ok
   end
 
@@ -327,7 +327,7 @@ defmodule ExMacOSControl.Workflows do
 
   defp do_current_page_to_note(opts) do
     with {:ok, page} <- capture_page() do
-      Composition.step(:create_note, fn ->
+      Composition.effect(:create_note, fn ->
         Notes.create_from(page, Keyword.take(opts, [:folder_id, :title]))
       end)
     end
@@ -346,13 +346,13 @@ defmodule ExMacOSControl.Workflows do
         |> Keyword.put_new(:subject, page.title)
         |> Keyword.put_new(:body, page.url <> "\n\n" <> page.selection)
 
-      Composition.step(:create_draft, fn -> Mail.create_draft(attrs) end)
+      Composition.effect(:create_draft, fn -> Mail.create_draft(attrs) end)
     end
   end
 
   defp do_clipboard_to_note(title, opts) do
     with {:ok, text} <- Composition.step(:read_clipboard, &StandardAdditions.clipboard/0) do
-      Composition.step(:create_note, fn ->
+      Composition.effect(:create_note, fn ->
         Notes.create_text_note(title, text, Keyword.take(opts, [:folder_id]))
       end)
     end
@@ -373,7 +373,7 @@ defmodule ExMacOSControl.Workflows do
 
   defp do_shortcut_to_clipboard(identifier, input, opts) do
     with {:ok, text} <- shortcut_text(identifier, input, opts),
-         :ok <- Composition.step(:write_clipboard, &StandardAdditions.set_clipboard/1, [text]) do
+         :ok <- Composition.effect(:write_clipboard, &StandardAdditions.set_clipboard/1, [text]) do
       {:ok, text}
     end
   end
@@ -389,7 +389,7 @@ defmodule ExMacOSControl.Workflows do
 
   defp do_message_to_note(account_id, mailbox, message_id, opts) do
     with {:ok, message} <- read_message(account_id, mailbox, message_id) do
-      Composition.step(:create_note, fn ->
+      Composition.effect(:create_note, fn ->
         Notes.create_text_note(
           Keyword.get(opts, :title, message.subject),
           message_body(message),
@@ -406,7 +406,7 @@ defmodule ExMacOSControl.Workflows do
 
   defp do_event_to_note(calendar_id, event_id, opts) do
     with {:ok, event} <- read_event(calendar_id, event_id) do
-      Composition.step(:create_note, fn ->
+      Composition.effect(:create_note, fn ->
         Notes.create_text_note(
           Keyword.get(opts, :title, event.title),
           event_body(event),
@@ -433,7 +433,7 @@ defmodule ExMacOSControl.Workflows do
            attributes
            |> Keyword.put_new(:title, reminder.title)
            |> Keyword.put_new(:description, reminder.body || ""),
-         {:ok, id} <- Composition.step(:create_event, fn -> Calendar.create_event(calendar_id, attrs) end),
+         {:ok, id} <- Composition.effect(:create_event, fn -> Calendar.create_event(calendar_id, attrs) end),
          :ok <- maybe_complete(reminder_id, opts) do
       {:ok, %{event_id: id, reminder_id: reminder_id}}
     end
