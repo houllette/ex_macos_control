@@ -70,4 +70,7 @@ jobs:
           test/integration/execution_contract_test.exs
           test/integration/tooling_contract_test.exs
           test/integration/wrapper_contract_test.exs
+          test/integration/app_compatibility_contract_test.exs
+          test/integration/compositions_contract_test.exs
+          test/integration/verified_draft_contract_test.exs
           test/integration/qualification_contract_test.exs
