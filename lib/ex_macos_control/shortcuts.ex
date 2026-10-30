@@ -7,7 +7,7 @@ defmodule ExMacOSControl.Shortcuts do
   envelope with a user-installed workflow. `sign/3` is an explicit distribution
   operation: Apple receives the shortcut for validation during signing.
   """
-  alias ExMacOSControl.{Automation, Command, Composition, Error, Resources}
+  alias ExMacOSControl.{Automation, Command, Composition, Error, Resources, Validation}
   @app "com.apple.shortcuts.events"
 
   def list(opts \\ []) do
@@ -110,8 +110,8 @@ defmodule ExMacOSControl.Shortcuts do
   remain JSON text at the Shortcuts boundary. Effects are never retried.
   """
   def pipeline(identifiers, input, opts \\ []) do
-    with :ok <- Composition.validate_items(identifiers),
-         :ok <- Composition.validate_all(identifiers, &Automation.required_string(&1, "Shortcut identity")),
+    with :ok <- Validation.items(identifiers),
+         :ok <- Validation.all(identifiers, &Automation.required_string(&1, "Shortcut identity")),
          :ok <- Automation.options(opts, [:output, :trim, :timeout, :max_output_bytes]),
          true <- Keyword.get(opts, :output, :text) in [:text, :json],
          true <- is_boolean(Keyword.get(opts, :trim, true)),

@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Finder.Compositions do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Finder}
+  alias ExMacOSControl.{Automation, Composition, Finder, Validation}
 
   def with_selection(fun, opts \\ []) when is_function(fun, 1) do
     Composition.run(
@@ -23,7 +23,7 @@ defmodule ExMacOSControl.Finder.Compositions do
   def move_files(paths, destination, opts \\ []), do: transfer(paths, destination, :move, opts)
 
   defp transfer(paths, destination, operation, opts) do
-    with :ok <- Composition.validate_items(paths),
+    with :ok <- Validation.items(paths),
          true <- is_binary(destination) and File.dir?(destination),
          true <- Enum.all?(paths, &(is_binary(&1) and File.exists?(&1))),
          outputs = Enum.map(paths, &Path.join(Path.expand(destination), Path.basename(&1))),
@@ -40,7 +40,7 @@ defmodule ExMacOSControl.Finder.Compositions do
 
   defp do_with_selection(fun) do
     with {:ok, paths} <- Composition.step(:finder_selection, &Finder.get_selection/0),
-         :ok <- Composition.validate_items(paths) do
+         :ok <- Validation.items(paths) do
       Composition.step(:use_selection, fn -> fun.(paths) end)
     end
   end

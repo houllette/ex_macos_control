@@ -78,7 +78,7 @@ defmodule ExMacOSControl.Messages do
   - Direct SQLite access is not implemented; Full Disk Access does not add AppleScript history support
   """
 
-  alias ExMacOSControl.{Error, ScriptOutput}
+  alias ExMacOSControl.{Error, ScriptOutput, Validation}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -446,8 +446,8 @@ defmodule ExMacOSControl.Messages do
   def send_to_chats(ids, text, opts \\ []) do
     alias ExMacOSControl.{Automation, Composition}
 
-    with :ok <- Composition.validate_items(ids),
-         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Chat ID")),
+    with :ok <- Validation.items(ids),
+         :ok <- Validation.all(ids, &Automation.required_string(&1, "Chat ID")),
          :ok <- Automation.required_string(text, "Message text") do
       Composition.run(fn -> Composition.map(ids, :send_message, &send_one_chat(&1, text)) end, opts)
     end
@@ -462,7 +462,7 @@ defmodule ExMacOSControl.Messages do
     alias ExMacOSControl.{Automation, Composition}
 
     with :ok <- Automation.required_string(id, "Chat ID"),
-         :ok <- Composition.validate_items(paths),
+         :ok <- Validation.items(paths),
          true <- Enum.all?(paths, &(is_binary(&1) and File.regular?(&1))) do
       Composition.run(fn -> Composition.map(paths, :send_file, &send_one_file(id, &1)) end, opts)
     else

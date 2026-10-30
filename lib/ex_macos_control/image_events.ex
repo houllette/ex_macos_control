@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.ImageEvents do
   @moduledoc "Image metadata and file transformations through Image Events. Output paths must be new files."
-  alias ExMacOSControl.{Automation, Composition}
+  alias ExMacOSControl.{Automation, Composition, Validation}
   @app "com.apple.imageevents"
   @extensions %{"PNG" => ".png", "JPEG" => ".jpg", "TIFF" => ".tiff", "BMP" => ".bmp", "PSD" => ".psd"}
 
@@ -76,8 +76,8 @@ defmodule ExMacOSControl.ImageEvents do
 
   @doc "Processes a batch into a directory, validating all inputs and output collisions before dispatch."
   def process_many(paths, destination, steps, opts \\ []) do
-    with :ok <- Composition.validate_items(paths),
-         :ok <- Composition.validate_all(paths, &input/1),
+    with :ok <- Validation.items(paths),
+         :ok <- Validation.all(paths, &input/1),
          :ok <- validate_steps(steps),
          :ok <- process_options(opts),
          true <- is_binary(destination) and File.dir?(destination),

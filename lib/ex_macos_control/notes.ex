@@ -4,7 +4,7 @@ defmodule ExMacOSControl.Notes do
   reads also expose plain text. Locked/shared content remains subject to Notes.
   List calls are paged; execution options include timeout and max_output_bytes.
   """
-  alias ExMacOSControl.{Automation, Composition, Resources}
+  alias ExMacOSControl.{Automation, Composition, HTML, Resources}
   @app "com.apple.Notes"
   @summary [
     id: "o.id()",
@@ -122,7 +122,7 @@ defmodule ExMacOSControl.Notes do
   @doc "Creates a note from plain text, escaping HTML rather than interpreting user text as markup."
   def create_text_note(title, text, opts \\ []) do
     if is_binary(text),
-      do: create_note([title: title, body: "<p>" <> Composition.html(text) <> "</p>"], opts),
+      do: create_note([title: title, body: "<p>" <> HTML.escape(text) <> "</p>"], opts),
       else: Automation.invalid("Note text must be a string")
   end
 
