@@ -17,6 +17,11 @@ defmodule ExMacosControl.MixProject do
       docs: docs(),
       aliases: aliases(),
       test_coverage: [tool: ExCoveralls],
+      dialyzer: [
+        plt_local_path: "tmp/plts",
+        plt_core_path: "tmp/plts",
+        plt_add_apps: [:mix] ++ if(Mix.env() == :test, do: [:ex_unit], else: [])
+      ],
       elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
@@ -39,7 +44,7 @@ defmodule ExMacosControl.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :crypto, :xmerl]
     ]
   end
 
@@ -99,19 +104,40 @@ defmodule ExMacosControl.MixProject do
           ExMacOSControl.Adapter,
           ExMacOSControl.OSAScriptAdapter,
           ExMacOSControl.Error,
-          ExMacOSControl.Platform
+          ExMacOSControl.Platform,
+          ExMacOSControl.Command,
+          ExMacOSControl.Capabilities,
+          ExMacOSControl.Shortcuts
         ],
         "Advanced Features": [
           ExMacOSControl.Script,
           ExMacOSControl.Retry,
-          ExMacOSControl.Permissions
+          ExMacOSControl.Permissions,
+          ExMacOSControl.Accessibility,
+          ExMacOSControl.StandardAdditions,
+          ExMacOSControl.PropertyList,
+          ExMacOSControl.Qualification,
+          ExMacOSControl.Wait
         ],
         "App Modules": [
           ExMacOSControl.SystemEvents,
           ExMacOSControl.Finder,
           ExMacOSControl.Safari,
           ExMacOSControl.Mail,
-          ExMacOSControl.Messages
+          ExMacOSControl.Messages,
+          ExMacOSControl.Notes,
+          ExMacOSControl.Calendar,
+          ExMacOSControl.Reminders,
+          ExMacOSControl.Contacts,
+          ExMacOSControl.Photos,
+          ExMacOSControl.Music,
+          ExMacOSControl.TV,
+          ExMacOSControl.QuickTime,
+          ExMacOSControl.ImageEvents,
+          ExMacOSControl.Terminal,
+          ExMacOSControl.Automator,
+          ExMacOSControl.SystemSettings,
+          ExMacOSControl.FinalCutPro
         ]
       ]
     ]

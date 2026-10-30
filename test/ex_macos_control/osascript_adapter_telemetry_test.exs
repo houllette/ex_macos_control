@@ -57,7 +57,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
       assert is_integer(measurements.script_length)
       assert measurements.script_length == String.length(script)
       assert metadata.command == "osascript"
-      assert metadata.script == script
+      refute Map.has_key?(metadata, :script)
+      assert byte_size(metadata.source_id) == 64
       assert metadata.timeout == nil
 
       # Should receive stop event
@@ -96,7 +97,7 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
     @tag :integration
     test "includes script preview in metadata (first 100 chars)" do
       long_script = String.duplicate("a", 200)
-      OSAScriptAdapter.run_applescript(long_script)
+      OSAScriptAdapter.run_applescript(long_script, telemetry_script: true)
 
       assert_received {:telemetry, [:ex_macos_control, :applescript, :start], _, %{script: preview}}
 
@@ -107,7 +108,7 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
     @tag :integration
     test "includes full short script in metadata" do
       short_script = ~s(return "hello")
-      OSAScriptAdapter.run_applescript(short_script)
+      OSAScriptAdapter.run_applescript(short_script, telemetry_script: true)
 
       assert_received {:telemetry, [:ex_macos_control, :applescript, :start], _, %{script: script}}
 
@@ -192,7 +193,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
 
       assert measurements.script_length == String.length(script)
       assert metadata.command == "osascript"
-      assert metadata.script == script
+      refute Map.has_key?(metadata, :script)
+      assert byte_size(metadata.source_id) == 64
 
       # Should receive stop event
       assert_received {:telemetry, [:ex_macos_control, :applescript, :stop], measurements, metadata}
@@ -243,7 +245,7 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
       assert_received {:telemetry, [:ex_macos_control, :applescript, :start], measurements, metadata}
 
       # Script should be the filename (not full content since it's a file)
-      assert metadata.script == Path.basename(file)
+      refute Map.has_key?(metadata, :script)
       assert measurements.script_length == String.length(Path.basename(file))
 
       assert_received {:telemetry, [:ex_macos_control, :applescript, :stop], _, _}
@@ -304,7 +306,8 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
       assert_received {:telemetry, [:ex_macos_control, :applescript, :start], _, _}
 
       assert_received {:telemetry, [:ex_macos_control, :applescript, :exception], _, metadata}
-      assert metadata.error == error
+      assert metadata.error == %{type: error.type}
+      refute Map.has_key?(metadata.error, :details)
     end
   end
 

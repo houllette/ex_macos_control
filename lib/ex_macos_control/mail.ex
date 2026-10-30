@@ -53,7 +53,7 @@ defmodule ExMacOSControl.Mail do
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
-    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+    ExMacOSControl
   end
 
   @doc """
@@ -64,15 +64,18 @@ defmodule ExMacOSControl.Mail do
 
   ## Options
 
-    * `:to` - (required) Recipient email address (string)
+    * `:to` - (required) Recipient email address or list of addresses
     * `:subject` - (required) Email subject (string)
     * `:body` - (required) Email body text (string)
     * `:cc` - (optional) CC recipients (list of strings)
     * `:bcc` - (optional) BCC recipients (list of strings)
+    * `:sender` - (optional) Configured sender address
+    * `:attachments` - (optional) Existing file paths
+    * `:timeout`, `:max_output_bytes` - Execution deadline and output bound
 
   ## Returns
 
-    * `:ok` - Email sent successfully
+    * `:ok` - Mail accepted the send command; this does not prove delivery
     * `{:error, error}` - Failed to send (see error types below)
 
   ## Error Types
@@ -112,20 +115,23 @@ defmodule ExMacOSControl.Mail do
   @spec send_email(keyword()) :: :ok | {:error, Error.t()}
   def send_email(opts) do
     with :ok <- validate_email_opts(opts),
-         :ok <- validate_email_address(opts[:to]),
-         :ok <- validate_email_list(opts[:cc] || []),
-         :ok <- validate_email_list(opts[:bcc] || []) do
+         :ok <- validate_email_list(List.wrap(opts[:to])),
+         :ok <- validate_email_list(Keyword.get(opts, :cc, [])),
+         :ok <- validate_email_list(Keyword.get(opts, :bcc, [])),
+         :ok <- validate_attachments(opts) do
       script = build_message_script(opts)
 
-      case adapter().run_applescript(script) do
-        {:ok, _output} ->
-          :ok
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      send_result(
+        ExMacOSControl.with_options(Keyword.take(opts, [:timeout, :max_output_bytes]), fn ->
+          adapter().run_applescript(script)
+        end)
+      )
     end
   end
+
+  defp send_result({:ok, "true"}), do: :ok
+  defp send_result({:ok, _}), do: {:error, Error.execution_error("Mail did not accept the message for sending")}
+  defp send_result({:error, _} = error), do: error
 
   @doc """
   Gets the count of unread messages in the inbox.
@@ -187,8 +193,10 @@ defmodule ExMacOSControl.Mail do
       # => {:ok, 0}
 
   """
-  @spec get_unread_count(String.t()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
-  def get_unread_count(mailbox_name) do
+  @spec get_unread_count(String.t() | keyword()) :: {:ok, non_neg_integer()} | {:error, Error.t()}
+  def get_unread_count(opts) when is_list(opts), do: ExMacOSControl.with_options(opts, &get_unread_count/0)
+
+  def get_unread_count(mailbox_name) when is_binary(mailbox_name) do
     script = """
     tell application "Mail"
       return unread count of mailbox "#{escape_quotes(mailbox_name)}"
@@ -242,7 +250,7 @@ defmodule ExMacOSControl.Mail do
 
     * Search is case-insensitive
     * Only searches subject lines
-    * Results are ordered by date (newest first)
+    * This legacy helper preserves Mail's enumeration order; use search_messages/3 for explicit date ordering
   """
   @spec search_mailbox(String.t(), String.t()) ::
           {:ok, [map()]} | {:error, Error.t()}
@@ -278,11 +286,21 @@ defmodule ExMacOSControl.Mail do
   # Validates that required email options are present
   @spec validate_email_opts(keyword()) :: :ok | {:error, Error.t()}
   defp validate_email_opts(opts) do
+    allowed = [:to, :subject, :body, :cc, :bcc, :sender, :from, :attachments, :timeout, :max_output_bytes]
+
+    if not is_list(opts) or not Keyword.keyword?(opts) or Keyword.keys(opts) -- allowed != [] do
+      {:error, Error.execution_error("Unknown or invalid Mail options")}
+    else
+      validate_required_fields(opts)
+    end
+  end
+
+  defp validate_required_fields(opts) do
     required_fields = [:to, :subject, :body]
 
     missing_field =
       Enum.find(required_fields, fn field ->
-        is_nil(opts[field]) or opts[field] == ""
+        is_nil(opts[field]) or opts[field] in ["", []]
       end)
 
     case missing_field do
@@ -299,16 +317,6 @@ defmodule ExMacOSControl.Mail do
       :ok
     else
       {:error, Error.execution_error("Subject and body must be strings")}
-    end
-  end
-
-  # Validates a single email address
-  @spec validate_email_address(String.t()) :: :ok | {:error, Error.t()}
-  defp validate_email_address(email) do
-    if valid_email?(email) do
-      :ok
-    else
-      {:error, Error.execution_error("Invalid email address", address: email)}
     end
   end
 
@@ -339,8 +347,16 @@ defmodule ExMacOSControl.Mail do
 
   # Builds AppleScript for creating and sending a message
   @spec build_message_script(keyword()) :: String.t()
-  defp build_message_script(opts) do
-    to = opts[:to]
+  defp build_message_script(opts, operation \\ "send") do
+    to_recipients = format_recipients(List.wrap(opts[:to]), "to recipient")
+    sender = opts[:sender] || opts[:from]
+    sender_property = if sender, do: ~s(, sender:"#{escape_quotes(sender)}"), else: ""
+
+    attachments =
+      Enum.map_join(Keyword.get(opts, :attachments, []), "\n", fn path ->
+        ~s(make new attachment with properties {file name:POSIX file "#{escape_quotes(Path.expand(path))}"} at after the last paragraph)
+      end)
+
     subject = escape_quotes(opts[:subject])
     body = escape_quotes(opts[:body])
     cc = opts[:cc] || []
@@ -351,12 +367,13 @@ defmodule ExMacOSControl.Mail do
 
     """
     tell application "Mail"
-      set newMessage to make new outgoing message with properties {subject:"#{subject}", content:"#{body}"}
+      set newMessage to make new outgoing message with properties {subject:"#{subject}", content:"#{body}"#{sender_property}}
       tell newMessage
-        make new to recipient with properties {address:"#{escape_quotes(to)}"}
+        #{to_recipients}
         #{cc_recipients}
         #{bcc_recipients}
-        send
+        #{attachments}
+        #{operation}
       end tell
     end tell
     """
@@ -391,4 +408,144 @@ defmodule ExMacOSControl.Mail do
   defp escape_quotes(string) do
     ExMacOSControl.Script.escape_string(string)
   end
+
+  defp validate_attachments(opts) do
+    files = Keyword.get(opts, :attachments, [])
+    sender = opts[:sender] || opts[:from]
+
+    cond do
+      opts[:sender] && opts[:from] ->
+        {:error, Error.execution_error("Choose sender or from")}
+
+      not is_nil(sender) and not valid_email?(sender) ->
+        {:error, Error.execution_error("Invalid sender address")}
+
+      not valid_attachment_files?(files) ->
+        {:error, Error.execution_error("Attachments must be existing files")}
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc "Creates and saves a draft without sending it; returns its outgoing-message ID."
+  def create_draft(opts) do
+    with :ok <- validate_email_opts(opts),
+         :ok <- validate_email_list(List.wrap(opts[:to])),
+         :ok <- validate_email_list(Keyword.get(opts, :cc, [])),
+         :ok <- validate_email_list(Keyword.get(opts, :bcc, [])),
+         :ok <- validate_attachments(opts) do
+      execution = opts |> ExMacOSControl.Automation.execution_options() |> Keyword.put_new(:timeout, 30_000)
+
+      ExMacOSControl.with_options(execution, fn ->
+        adapter().run_applescript(build_message_script(opts, "save\n        return id as text"))
+      end)
+    end
+  end
+
+  def list_accounts(opts \\ []),
+    do: ExMacOSControl.Resources.list("com.apple.mail", "app.accounts", [id: "o.id()", name: "o.name()"], %{}, opts)
+
+  def list_mailboxes(account_id, opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.mail",
+        "byId(app.accounts,input.account_id).mailboxes",
+        [name: "o.name()", unread: "o.unreadCount()"],
+        %{account_id: account_id},
+        opts
+      )
+
+  @doc "Searches an account mailbox with paging and explicit newest-first ordering. Mailbox can be a name or a path of names."
+  def search_messages(account_id, mailbox, opts \\ []) do
+    alias ExMacOSControl.Automation
+
+    with :ok <-
+           Automation.options(opts, [:query, :sender, :read, :from, :to, :limit, :offset, :timeout, :max_output_bytes]),
+         {:ok, paging} <- Automation.page(opts),
+         {:ok, from} <- Automation.date(opts[:from]),
+         {:ok, to} <- Automation.date(opts[:to]) do
+      code =
+        mailbox_code() <>
+          """
+          var filter={}; if(input.query)filter.subject={_contains:input.query}; if(input.sender)filter.sender={_contains:input.sender}; if(input.read!==null)filter.readStatus=input.read;
+          var values=box.messages.whose(filter)().map(function(o){return {o:o,date:o.dateReceived()};});
+          values=values.filter(function(x){return (!input.from||x.date>=new Date(input.from))&&(!input.to||x.date<=new Date(input.to));});
+          values.sort(function(a,b){return b.date-a.date;});
+          return page(values).map(function(x){var o=x.o;return {id:o.id(),message_id:o.messageId(),subject:o.subject(),sender:o.sender(),received_at:iso(x.date),read:o.readStatus(),flagged:o.flaggedStatus()};});
+          """
+
+      params =
+        Map.merge(paging, %{
+          account_id: account_id,
+          mailbox: mailbox,
+          query: opts[:query],
+          sender: opts[:sender],
+          read: opts[:read],
+          from: from,
+          to: to
+        })
+
+      Automation.query("com.apple.mail", code, params, Automation.execution_options(opts))
+    end
+  end
+
+  def get_message(account_id, mailbox, id, opts \\ []) do
+    ExMacOSControl.Automation.query(
+      "com.apple.mail",
+      mailbox_code() <>
+        "var o=byId(box.messages,input.id);return {id:o.id(),message_id:o.messageId(),subject:o.subject(),sender:o.sender(),received_at:iso(o.dateReceived()),content:o.content(),source:o.source(),read:o.readStatus(),attachments:o.mailAttachments().map(function(a,i){return {index:i+1,name:a.name(),size:a.fileSize()};})};",
+      %{account_id: account_id, mailbox: mailbox, id: id},
+      opts
+    )
+  end
+
+  def update_message(account_id, mailbox, id, attrs, opts \\ []) do
+    with {:ok, properties, _} <-
+           ExMacOSControl.Resources.properties(attrs,
+             read: {"readStatus", :boolean},
+             flagged: {"flaggedStatus", :boolean},
+             junk: {"junkMailStatus", :boolean}
+           ) do
+      ExMacOSControl.Automation.action(
+        "com.apple.mail",
+        mailbox_code() <>
+          "var o=byId(box.messages,input.id);Object.keys(input.properties).forEach(function(key){o[key]=input.properties[key];});",
+        %{account_id: account_id, mailbox: mailbox, id: id, properties: properties},
+        opts
+      )
+    end
+  end
+
+  def save_attachment(account_id, mailbox, id, index, destination, opts \\ []) when is_integer(index) and index > 0 do
+    with :ok <- ExMacOSControl.Automation.required_string(destination, "Output path"),
+         false <- File.exists?(destination) do
+      ExMacOSControl.Automation.action(
+        "com.apple.mail",
+        mailbox_code() <>
+          "var a=byId(box.messages,input.id).mailAttachments[input.index-1];if(!a.exists())throw new Error('Attachment not found');app.save(a,{in:Path(input.path)});",
+        %{account_id: account_id, mailbox: mailbox, id: id, index: index, path: Path.expand(destination)},
+        opts
+      )
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Attachment destination already exists")}
+    end
+  end
+
+  def get_unread_count(mailbox, opts), do: ExMacOSControl.with_options(opts, fn -> get_unread_count(mailbox) end)
+
+  def search_mailbox(mailbox, query, opts),
+    do: ExMacOSControl.with_options(opts, fn -> search_mailbox(mailbox, query) end)
+
+  defp mailbox_code do
+    """
+    var parts=Array.isArray(input.mailbox)?input.mailbox:[input.mailbox];
+    if(parts.length===0)throw new Error('Mailbox path is empty');
+    var owner=byId(app.accounts,input.account_id),box;
+    parts.forEach(function(name){box=owner.mailboxes.byName(name);if(!box.exists())throw new Error('Mailbox not found');owner=box;});
+    """
+  end
+
+  defp valid_attachment_files?(files), do: is_list(files) and Enum.all?(files, &(is_binary(&1) and File.regular?(&1)))
 end

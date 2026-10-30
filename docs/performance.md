@@ -77,9 +77,9 @@ ExMacOSControl.Finder.move_to_trash(file_path)
 
 ```elixir
 # Less efficient - multiple osascript calls
-{:ok, name} = ExMacOSControl.Finder.get_frontmost_window()
-{:ok, bounds} = ExMacOSControl.Finder.get_window_bounds(name)
-{:ok, position} = ExMacOSControl.Finder.get_window_position(name)
+{:ok, %{id: window_id}} = ExMacOSControl.Finder.get_frontmost_window()
+{:ok, bounds} = ExMacOSControl.Finder.get_window_bounds(window_id)
+{:ok, position} = ExMacOSControl.Finder.get_window_position(window_id)
 
 # More efficient - single script with multiple operations
 script = """
@@ -96,7 +96,7 @@ end tell
 
 ### Default Behavior
 
-By default, ExMacOSControl operations have NO timeout. This means they will wait indefinitely for completion.
+Raw execution and legacy helpers retain no default library deadline. New typed app helpers use 30 seconds. Deadlines terminate the owned process group, but effects already dispatched to another application have an unknown outcome.
 
 ### When to Use Timeouts
 
@@ -228,7 +228,7 @@ ExMacOSControl emits telemetry events for all operations, allowing you to monito
 - `[:ex_macos_control, :applescript, :exception]` - Script execution fails
 
 **Measurements:**
-- `script_length` - Length of the script in bytes
+- `script_length` - Length of the script in characters
 - `duration` - Execution time in microseconds (stop/exception only)
 
 **Metadata:**
@@ -307,7 +307,7 @@ defmodule MyApp.TelemetryHandler do
       Logger.warning("""
       Slow AppleScript execution detected:
       Duration: #{duration_ms}ms
-      Script: #{metadata.script}
+      Source ID: #{metadata.source_id}
       Timeout: #{metadata.timeout}
       """)
     end

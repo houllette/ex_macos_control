@@ -9,6 +9,23 @@ defmodule ExMacOSControl.MailTest do
   setup :verify_on_exit!
 
   describe "send_email/1" do
+    test "false and malformed acknowledgements are failures" do
+      for output <- ["false", "", "unexpected"] do
+        expect(ExMacOSControl.AdapterMock, :run_applescript, fn _ -> {:ok, output} end)
+
+        assert {:error, %Error{type: :execution_error}} =
+                 Mail.send_email(to: "test@example.invalid", subject: "Test", body: "Test")
+      end
+    end
+
+    test "unknown options and missing attachment files fail before sending" do
+      assert {:error, %Error{}} =
+               Mail.send_email(to: "test@example.invalid", subject: "Test", body: "Test", ignored: true)
+
+      assert {:error, %Error{}} =
+               Mail.send_email(to: "test@example.invalid", subject: "Test", body: "Test", attachments: ["missing-file"])
+    end
+
     test "rejects malformed recipients and text without executing a send" do
       valid = [to: "recipient@example.com", subject: "Subject", body: "Body"]
 
@@ -26,7 +43,7 @@ defmodule ExMacOSControl.MailTest do
     test "escapes message content containing backslashes and quotes" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ ~S(content:"Path\\\"Quoted")
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok = Mail.send_email(to: "recipient@example.com", subject: "Subject", body: ~S(Path\"Quoted))
@@ -40,7 +57,7 @@ defmodule ExMacOSControl.MailTest do
         assert script =~ "Test Subject"
         assert script =~ "Test Body"
         assert script =~ "send"
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -56,7 +73,7 @@ defmodule ExMacOSControl.MailTest do
         assert script =~ "recipient@example.com"
         assert script =~ "cc@example.com"
         assert script =~ "make new cc recipient"
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -73,7 +90,7 @@ defmodule ExMacOSControl.MailTest do
         assert script =~ "recipient@example.com"
         assert script =~ "bcc@example.com"
         assert script =~ "make new bcc recipient"
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -89,7 +106,7 @@ defmodule ExMacOSControl.MailTest do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "cc@example.com"
         assert script =~ "bcc@example.com"
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -106,7 +123,7 @@ defmodule ExMacOSControl.MailTest do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "cc1@example.com"
         assert script =~ "cc2@example.com"
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -210,7 +227,7 @@ defmodule ExMacOSControl.MailTest do
     test "escapes quotes in subject" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "\\\""
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =
@@ -224,7 +241,7 @@ defmodule ExMacOSControl.MailTest do
     test "escapes quotes in body" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "\\\""
-        {:ok, ""}
+        {:ok, "true"}
       end)
 
       assert :ok =

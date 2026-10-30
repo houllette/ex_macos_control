@@ -31,10 +31,10 @@ ExMacOSControl.run_applescript(script)  # Total: component 2 + 3
 
 ### Timeout Tuning
 
-Default timeouts vary by operation. Tune them based on your needs:
+Raw execution and legacy calls retain no default library deadline. New typed app helpers use 30 seconds. Pass an explicit timeout for production calls:
 
 ```elixir
-# Default timeout (usually 30 seconds)
+# Raw execution has no default library deadline
 {:ok, result} = ExMacOSControl.run_applescript(script)
 
 # Quick operations - fail fast
@@ -190,11 +190,11 @@ defmodule MyApp.Telemetry do
   require Logger
 
   def handle_event([:ex_macos_control, :applescript, :start], _measurements, metadata, _config) do
-    Logger.debug("Executing AppleScript: #{String.slice(metadata.script, 0, 100)}...")
+    Logger.debug("Executing AppleScript: #{metadata.source_id}...")
   end
 
   def handle_event([:ex_macos_control, :applescript, :stop], measurements, metadata, _config) do
-    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    duration_ms = System.convert_time_unit(measurements.duration, :microsecond, :millisecond)
     Logger.info("AppleScript completed in #{duration_ms}ms")
   end
 
@@ -217,13 +217,13 @@ defmodule MyApp.PerformanceMonitor do
   require Logger
 
   def handle_event([:ex_macos_control, :applescript, :stop], measurements, metadata, _config) do
-    duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+    duration_ms = System.convert_time_unit(measurements.duration, :microsecond, :millisecond)
 
     if duration_ms > 5_000 do
       Logger.warning("""
       Slow AppleScript detected!
       Duration: #{duration_ms}ms
-      Script: #{String.slice(metadata.script, 0, 200)}
+      Script: #{metadata.source_id}
       Timeout: #{metadata.timeout}ms
       """)
     end
@@ -251,7 +251,7 @@ defmodule MyApp.Metrics do
       Telemetry.Metrics.distribution("ex_macos_control.applescript.duration",
         event_name: [:ex_macos_control, :applescript, :stop],
         measurement: :duration,
-        unit: {:native, :millisecond}
+        unit: {:microsecond, :millisecond}
       ),
 
       # Count failures
@@ -277,29 +277,29 @@ end
 # :start event metadata
 %{
   command: "osascript",
-  script: "tell application...",  # Full script
+  source_id: "sha256 identifier", # Source preview requires telemetry_script: true
   timeout: 30_000
 }
 
 # :stop event measurements & metadata
 measurements: %{
-  duration: 1_234_567,  # Native time units
+  duration: 1_234_567,  # Microseconds
   script_length: 156    # Character count
 }
 metadata: %{
   command: "osascript",
-  script: "tell application...",
+  source_id: "sha256 identifier",
   timeout: 30_000,
-  result_type: :ok,
+  result_type: :success,
   output_length: 42
 }
 
 # :exception event metadata
 %{
   command: "osascript",
-  script: "tell application...",
+  source_id: "sha256 identifier",
   timeout: 30_000,
-  error: %ExMacOSControl.Error{type: :timeout, ...}
+  error: %{type: :timeout}  # Classification only; private error details are omitted
 }
 ```
 
@@ -430,7 +430,8 @@ defmodule MyApp.LoggingAdapter do
 
   @impl true
   def run_applescript(script, opts \\ []) do
-    Logger.info("Running AppleScript: #{String.slice(script, 0, 100)}...")
+    source_id = Base.encode16(:crypto.hash(:sha256, script), case: :lower)
+    Logger.info("Running AppleScript source #{source_id}")
     start_time = System.monotonic_time()
 
     result = ExMacOSControl.OSAScriptAdapter.run_applescript(script, opts)
@@ -441,13 +442,14 @@ defmodule MyApp.LoggingAdapter do
       :millisecond
     )
 
-    Logger.info("Completed in #{duration}ms: #{inspect(result)}")
+    Logger.info("Completed in #{duration}ms; success=#{match?({:ok, _}, result)}")
     result
   end
 
   @impl true
   def run_javascript(script, opts \\ []) do
-    Logger.info("Running JavaScript: #{String.slice(script, 0, 100)}...")
+    source_id = Base.encode16(:crypto.hash(:sha256, script), case: :lower)
+    Logger.info("Running JavaScript source #{source_id}")
     ExMacOSControl.OSAScriptAdapter.run_javascript(script, opts)
   end
 end
@@ -571,10 +573,10 @@ ObjC.import('AppKit')
 var workspace = $.NSWorkspace.sharedWorkspace
 var apps = workspace.runningApplications.js
 
-apps.map(app => app.localizedName.js)
+JSON.stringify(apps.map(app => app.localizedName.js))
 """
 
-{:ok, apps} = ExMacOSControl.run_javascript(script)
+{:ok, apps} = ExMacOSControl.run_javascript(script, output: :json)
 # => {:ok, ["Finder", "Safari", "Terminal", ...]}
 ```
 

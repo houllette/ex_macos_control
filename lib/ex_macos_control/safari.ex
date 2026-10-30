@@ -63,7 +63,7 @@ defmodule ExMacOSControl.Safari do
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
-    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+    ExMacOSControl
   end
 
   @doc """
@@ -324,5 +324,111 @@ defmodule ExMacOSControl.Safari do
   @spec escape_quotes(String.t()) :: String.t()
   defp escape_quotes(string) do
     ExMacOSControl.Script.escape_string(string)
+  end
+
+  @doc "Lists windows by Safari ID; tab indices are local to each window."
+  def list_windows(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.Safari",
+        "app.windows",
+        [id: "o.id()", name: "o.name()", bounds: "o.bounds()"],
+        %{},
+        opts
+      )
+
+  def tabs(window_id, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:limit, :offset, :timeout, :max_output_bytes]),
+         {:ok, paging} <- ExMacOSControl.Automation.page(opts) do
+      ExMacOSControl.Automation.query(
+        "com.apple.Safari",
+        "return page(byId(app.windows,input.window_id).tabs()).map(function(o,i){return {window_id:input.window_id,tab_index:input.offset+i+1,title:o.name(),url:o.url()};});",
+        Map.put(paging, :window_id, window_id),
+        ExMacOSControl.Automation.execution_options(opts)
+      )
+    end
+  end
+
+  def execute_javascript_in(window_id, index, code, opts \\ []) when is_binary(code),
+    do: tab_query(window_id, index, "return app.doJavaScript(input.code,{in:t});", %{code: code}, opts)
+
+  def get_source(window_id, index, opts \\ []), do: tab_query(window_id, index, "return t.source();", %{}, opts)
+  def get_text(window_id, index, opts \\ []), do: tab_query(window_id, index, "return t.text();", %{}, opts)
+
+  def get_tab(window_id, index, opts \\ []),
+    do:
+      tab_query(
+        window_id,
+        index,
+        "return {window_id:input.window_id,tab_index:input.index,title:t.name(),url:t.url()};",
+        %{},
+        opts
+      )
+
+  def navigate(window_id, index, url, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.required_string(url, "URL"),
+         do: tab_action(window_id, index, "t.url=input.url;", %{url: url}, opts)
+  end
+
+  def activate_tab(window_id, index, opts \\ []),
+    do: tab_action(window_id, index, "w.currentTab=t;w.index=1;app.activate();", %{}, opts)
+
+  def close_tab_in(window_id, index, opts \\ []), do: tab_action(window_id, index, "app.close(t);", %{}, opts)
+
+  def wait_for_load(window_id, index, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :interval, :max_output_bytes]) do
+      ExMacOSControl.Wait.until(
+        fn remaining -> loaded?(window_id, index, remaining, opts) end,
+        Keyword.take(opts, [:timeout, :interval])
+      )
+    end
+  end
+
+  def add_reading_list(url, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:title, :preview, :timeout, :max_output_bytes]),
+         :ok <- ExMacOSControl.Automation.required_string(url, "URL") do
+      ExMacOSControl.Automation.action(
+        "com.apple.Safari",
+        "var options={};if(input.title!==null)options.withTitle=input.title;if(input.preview!==null)options.andPreviewText=input.preview;app.addReadingListItem(input.url,options);",
+        %{url: url, title: opts[:title], preview: opts[:preview]},
+        ExMacOSControl.Automation.execution_options(opts)
+      )
+    end
+  end
+
+  def open_url(url, opts), do: ExMacOSControl.with_options(opts, fn -> open_url(url) end)
+  def get_current_url(opts), do: ExMacOSControl.with_options(opts, &get_current_url/0)
+  def execute_javascript(code, opts), do: ExMacOSControl.with_options(opts, fn -> execute_javascript(code) end)
+  def list_tabs(opts), do: ExMacOSControl.with_options(opts, &list_tabs/0)
+  def close_tab(index, opts), do: ExMacOSControl.with_options(opts, fn -> close_tab(index) end)
+
+  defp tab_action(window_id, index, body, params, opts) do
+    case tab_query(window_id, index, body <> "return true;", params, opts) do
+      {:ok, true} -> :ok
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Safari did not acknowledge operation")}
+    end
+  end
+
+  defp tab_query(window_id, index, body, params, opts) when is_integer(index) and index > 0 do
+    ExMacOSControl.Automation.query(
+      "com.apple.Safari",
+      "var w=byId(app.windows,input.window_id),t=w.tabs[input.index-1];if(!t.exists())throw new Error('Tab not found');#{body}",
+      Map.merge(params, %{window_id: window_id, index: index}),
+      opts
+    )
+  end
+
+  defp tab_query(_, _, _, _, _), do: {:error, Error.execution_error("Tab index must be positive")}
+
+  defp loaded?(window_id, index, remaining, opts) do
+    case execute_javascript_in(window_id, index, "document.readyState",
+           timeout: remaining,
+           max_output_bytes:
+             Keyword.get(ExMacOSControl.Automation.execution_options(opts), :max_output_bytes, 10_485_760)
+         ) do
+      {:ok, state} -> {:ok, state == "complete"}
+      error -> error
+    end
   end
 end

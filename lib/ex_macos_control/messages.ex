@@ -74,7 +74,7 @@ defmodule ExMacOSControl.Messages do
 
   - Only `service: :auto` is supported; explicit `:sms`/`:imessage` requests return an error before sending
   - `get_unread_count/0` returns an error, and chat `:unread` values are `nil` (unknown), not zero
-  - `get_recent_messages/1` returns an unsupported-functionality error without contacting Messages
+  - History requires an explicitly configured Shortcuts workflow; AppleScript alone does not expose messages
   - Direct SQLite access is not implemented; Full Disk Access does not add AppleScript history support
   """
 
@@ -82,7 +82,7 @@ defmodule ExMacOSControl.Messages do
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
-    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+    ExMacOSControl
   end
 
   @doc """
@@ -174,24 +174,32 @@ defmodule ExMacOSControl.Messages do
   @spec send_message(String.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
   def send_message(recipient, text, opts) do
     with :ok <- validate_send_options(recipient, text, opts) do
-      if Keyword.get(opts, :group_chat, false) do
-        send_to_group_chat(recipient, text)
-      else
-        send_script(build_send_message_script(recipient, text))
-      end
+      ExMacOSControl.with_options(Keyword.take(opts, [:timeout, :max_output_bytes]), fn ->
+        deliver_message(recipient, text, opts)
+      end)
     end
   end
 
-  @doc """
-  Reports that message history is unsupported by the Messages AppleScript API.
+  defp deliver_message(recipient, text, opts) do
+    if Keyword.get(opts, :group_chat, false),
+      do: send_to_group_chat(recipient, text),
+      else: send_script(build_send_message_script(recipient, text))
+  end
 
-  Returns an execution error without contacting Messages. Full Disk Access does
-  not add history support to the scripting dictionary; direct database access is
-  not implemented.
+  @doc """
+  Reads recent messages through the configured Shortcuts workflow.
+
+  Set `:message_search_shortcut` in the `:ex_macos_control` application configuration
+  to a user-installed workflow identifier. Without it, returns an execution error
+  without contacting Messages. Full Disk Access does not add history support to
+  the scripting dictionary; direct database access is not used.
   """
-  @spec get_recent_messages(String.t()) :: {:error, Error.t()}
-  def get_recent_messages(_recipient) do
-    {:error, Error.execution_error("Messages history is not supported by the AppleScript API")}
+  @spec get_recent_messages(String.t()) :: {:ok, [term()]} | {:error, Error.t()}
+  def get_recent_messages(recipient) do
+    case Application.get_env(:ex_macos_control, :message_search_shortcut) do
+      nil -> {:error, Error.execution_error("Messages history is not supported by the AppleScript API")}
+      id -> search_messages("", shortcut_id: id, sender: recipient)
+    end
   end
 
   @doc """
@@ -284,6 +292,9 @@ defmodule ExMacOSControl.Messages do
 
   defp validate_delivery_options(opts) do
     cond do
+      Keyword.keys(opts) -- [:service, :group_chat, :timeout, :max_output_bytes] != [] ->
+        {:error, Error.execution_error("Unknown Messages option")}
+
       Keyword.get(opts, :service, :auto) != :auto ->
         {:error, Error.execution_error("Explicit Messages service selection is not supported; use service: :auto")}
 
@@ -382,6 +393,102 @@ defmodule ExMacOSControl.Messages do
       else
         {:ok, Enum.map(rows, &chat_from_row/1)}
       end
+    end
+  end
+
+  @doc "Sends a file through Messages using automatic service selection."
+  def send_file(recipient, path, opts \\ []) do
+    with :ok <- validate_send_options(recipient, "file", opts),
+         true <- is_binary(path) and File.regular?(path),
+         false <- Keyword.get(opts, :group_chat, false) do
+      script =
+        ~s(tell application "Messages" to send POSIX file "#{escape_quotes(Path.expand(path))}" to buddy "#{escape_quotes(recipient)}")
+
+      execution = opts |> ExMacOSControl.Automation.execution_options() |> Keyword.put_new(:timeout, 30_000)
+      ExMacOSControl.with_options(execution, fn -> send_script(script) end)
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("File must exist; use send_file_to_chat for a group destination")}
+    end
+  end
+
+  @doc "Sends text to an explicitly selected chat ID."
+  def send_to_chat(id, text, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.required_string(id, "Chat ID"),
+         :ok <- ExMacOSControl.Automation.required_string(text, "Message text") do
+      ExMacOSControl.Automation.action(
+        "com.apple.MobileSMS",
+        "app.send(input.text,{to:byId(app.chats,input.id)});",
+        %{id: id, text: text},
+        opts
+      )
+    end
+  end
+
+  def send_file_to_chat(id, path, opts \\ []) do
+    if is_binary(path) and File.regular?(path) do
+      ExMacOSControl.Automation.action(
+        "com.apple.MobileSMS",
+        "app.send(Path(input.path),{to:byId(app.chats,input.id)});",
+        %{id: id, path: Path.expand(path)},
+        opts
+      )
+    else
+      {:error, Error.execution_error("Message file does not exist")}
+    end
+  end
+
+  def list_accounts(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.MobileSMS",
+        "app.accounts",
+        [id: "o.id()", name: "o.description()", enabled: "o.enabled()", service_type: "o.serviceType()"],
+        %{},
+        opts
+      )
+
+  def list_participants(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.MobileSMS",
+        "app.participants",
+        [id: "o.id()", name: "o.fullName()", handle: "o.handle()"],
+        %{},
+        opts
+      )
+
+  def list_chats(opts), do: ExMacOSControl.with_options(opts, &list_chats/0)
+
+  @doc """
+  Searches using a user-installed Shortcuts workflow, without accessing the Messages database.
+
+  The workflow receives JSON text with `exmc: 1`, `operation: "messages.search"`,
+  and an `input` object containing query, sender, date bounds, limit and offset.
+  It must return JSON text shaped as `{"exmc":1,"result":[...]}`. Result fields
+  belong to the installed workflow. Use `:shortcut_id` or the application setting
+  `:message_search_shortcut` to select it.
+  """
+  def search_messages(query, opts \\ []) do
+    allowed = [:shortcut_id, :sender, :from, :to, :limit, :offset, :timeout, :max_output_bytes]
+
+    with :ok <- ExMacOSControl.Automation.options(opts, allowed),
+         {:ok, paging} <- ExMacOSControl.Automation.page(opts),
+         {:ok, from} <- ExMacOSControl.Automation.date(opts[:from]),
+         {:ok, to} <- ExMacOSControl.Automation.date(opts[:to]),
+         id = Keyword.get(opts, :shortcut_id, Application.get_env(:ex_macos_control, :message_search_shortcut)),
+         :ok <- ExMacOSControl.Automation.required_string(id, "Message search shortcut ID"),
+         {:ok, messages} when is_list(messages) <-
+           ExMacOSControl.Shortcuts.workflow(
+             id,
+             "messages.search",
+             Map.merge(paging, %{query: query, sender: opts[:sender], from: from, to: to}),
+             ExMacOSControl.Automation.execution_options(opts)
+           ) do
+      {:ok, messages}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Message search workflow must return a list")}
     end
   end
 end

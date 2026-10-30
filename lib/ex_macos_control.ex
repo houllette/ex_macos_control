@@ -75,7 +75,12 @@ defmodule ExMacOSControl do
 
   """
   @spec run_applescript(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_applescript(script), do: adapter().run_applescript(script)
+  def run_applescript(script) do
+    case Process.get({__MODULE__, :options}, []) do
+      [] -> adapter().run_applescript(script)
+      opts -> adapter().run_applescript(script, opts)
+    end
+  end
 
   @doc """
   Executes AppleScript code with options.
@@ -84,6 +89,15 @@ defmodule ExMacOSControl do
 
     * `:timeout` - Maximum time in milliseconds to wait for script execution
     * `:args` - List of string arguments to pass to the script
+    * `:output` - `:text` (default), `:source` (AppleScript source representation),
+      `:json` (decode returned JSON text), or `:execution` (stdout, stderr and status)
+    * `:trim` - Preserve text whitespace when false (default true)
+    * `:stdin` - Pass source through stdin; automatic for source larger than 64 KiB
+    * `:max_output_bytes` - Combined stdout/stderr limit (default 10 MiB)
+    * `:telemetry_script` - Include a source preview in telemetry (default false)
+
+  Raw calls have no default deadline. A timeout terminates the owned process group;
+  effects already dispatched to an app can have an unknown outcome.
 
   ## Examples
 
@@ -109,8 +123,9 @@ defmodule ExMacOSControl do
 
   """
   @spec run_applescript(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_applescript(script, opts), do: adapter().run_applescript(script, opts)
+          {:ok, term()} | {:error, ExMacOSControl.Error.t()}
+  def run_applescript(script, opts),
+    do: adapter().run_applescript(script, execution_options(opts))
 
   @doc """
   Executes JavaScript for Automation (JXA) code.
@@ -134,7 +149,12 @@ defmodule ExMacOSControl do
 
   """
   @spec run_javascript(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def run_javascript(script), do: adapter().run_javascript(script)
+  def run_javascript(script) do
+    case execution_options() do
+      [] -> adapter().run_javascript(script)
+      opts -> adapter().run_javascript(script, opts)
+    end
+  end
 
   @doc """
   Executes JavaScript for Automation (JXA) code with options.
@@ -164,8 +184,9 @@ defmodule ExMacOSControl do
 
   """
   @spec run_javascript(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, term()}
-  def run_javascript(script, opts), do: adapter().run_javascript(script, opts)
+          {:ok, term()} | {:error, term()}
+  def run_javascript(script, opts),
+    do: adapter().run_javascript(script, execution_options(opts))
 
   @doc """
   Executes a script file from disk with automatic language detection.
@@ -182,7 +203,8 @@ defmodule ExMacOSControl do
 
   The language is automatically detected from the file extension:
 
-    * `.scpt`, `.applescript` → AppleScript
+    * `.applescript` → AppleScript
+    * `.scpt`, `.scptd` → Native compiled language (including script bundles)
     * `.js`, `.jxa` → JavaScript
 
   ## Returns
@@ -202,7 +224,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_script_file(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path), do: adapter().run_script_file(file_path, [])
+  def run_script_file(file_path), do: adapter().run_script_file(file_path, execution_options())
 
   @doc """
   Executes a script file from disk with options.
@@ -223,7 +245,8 @@ defmodule ExMacOSControl do
 
   The language is automatically detected from the file extension:
 
-    * `.scpt`, `.applescript` → AppleScript
+    * `.applescript` → AppleScript
+    * `.scpt`, `.scptd` → Native compiled language (including script bundles)
     * `.js`, `.jxa` → JavaScript
 
   You can override automatic detection using the `:language` option.
@@ -261,8 +284,8 @@ defmodule ExMacOSControl do
 
   """
   @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path, opts), do: adapter().run_script_file(file_path, opts)
+          {:ok, term()} | {:error, ExMacOSControl.Error.t()}
+  def run_script_file(file_path, opts), do: adapter().run_script_file(file_path, execution_options(opts))
 
   @doc """
   Executes a macOS Shortcut by name.
@@ -287,7 +310,12 @@ defmodule ExMacOSControl do
 
   """
   @spec run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
-  def run_shortcut(name), do: adapter().run_shortcut(name)
+  def run_shortcut(name) do
+    case execution_options() do
+      [] -> adapter().run_shortcut(name)
+      opts -> adapter().run_shortcut(name, opts)
+    end
+  end
 
   @doc """
   Executes a macOS Shortcut by name with input parameters.
@@ -325,7 +353,7 @@ defmodule ExMacOSControl do
   """
   @spec run_shortcut(String.t(), ExMacOSControl.Adapter.options()) ::
           :ok | {:ok, String.t()} | {:error, term()}
-  def run_shortcut(name, opts), do: adapter().run_shortcut(name, opts)
+  def run_shortcut(name, opts), do: adapter().run_shortcut(name, execution_options(opts))
 
   @doc """
   Lists all available macOS Shortcuts.
@@ -353,4 +381,22 @@ defmodule ExMacOSControl do
   """
   @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
   def list_shortcuts, do: adapter().list_shortcuts()
+
+  @doc "Applies execution deadlines and output limits to app calls in the current process. Nested scopes restore prior options."
+  def with_options(opts, fun) when is_function(fun, 0) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :max_output_bytes]) do
+      key = {__MODULE__, :options}
+      previous = Process.get(key, [])
+      Process.put(key, Keyword.merge(previous, opts))
+
+      try do
+        fun.()
+      after
+        Process.put(key, previous)
+      end
+    end
+  end
+
+  @doc false
+  def execution_options(opts \\ []), do: Keyword.merge(Process.get({__MODULE__, :options}, []), opts)
 end

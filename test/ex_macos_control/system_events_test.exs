@@ -383,7 +383,7 @@ defmodule ExMacOSControl.SystemEventsTest do
         assert script =~ "System Events"
         assert script =~ ~s(process "Safari")
         assert script =~ "front window"
-        {:ok, "100, 200, 800, 600, Google"}
+        {:ok, ExMacOSControl.TestHelpers.script_output([[100, 200, 800, 600, "Google"]])}
       end)
 
       assert {:ok, props} = SystemEvents.get_window_properties("Safari")
@@ -401,7 +401,7 @@ defmodule ExMacOSControl.SystemEventsTest do
 
     test "parses position and size correctly" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, "0, 0, 1920, 1080, My Window"}
+        {:ok, ExMacOSControl.TestHelpers.script_output([[0, 0, 1920, 1080, "My Window"]])}
       end)
 
       assert {:ok, props} = SystemEvents.get_window_properties("App")

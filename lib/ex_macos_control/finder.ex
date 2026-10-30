@@ -280,4 +280,182 @@ defmodule ExMacOSControl.Finder do
 
   # Validate view mode
   defp valid_view?(view), do: view in [:icon, :list, :column, :gallery]
+
+  @doc "Lists Finder windows with IDs, bounds and target URLs."
+  def list_windows(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.finder",
+        "app.finderWindows",
+        [id: "o.id()", name: "o.name()", bounds: "o.bounds()", url: "o.target().url()"],
+        %{},
+        opts
+      )
+
+  def get_frontmost_window(opts \\ []) do
+    ExMacOSControl.Automation.query(
+      "com.apple.finder",
+      "if(app.finderWindows.length===0)return null;var o=app.finderWindows[0];return {id:o.id(),name:o.name(),bounds:o.bounds(),url:o.target().url()};",
+      %{},
+      opts
+    )
+  end
+
+  def get_window_bounds(id, opts \\ []),
+    do:
+      ExMacOSControl.Automation.query(
+        "com.apple.finder",
+        "return byId(app.finderWindows,input.id).bounds();",
+        %{id: id},
+        opts
+      )
+
+  def get_window_position(id, opts \\ []),
+    do:
+      ExMacOSControl.Automation.query(
+        "com.apple.finder",
+        "return byId(app.finderWindows,input.id).bounds().slice(0,2);",
+        %{id: id},
+        opts
+      )
+
+  def set_window_target(id, path, opts \\ []) when is_integer(id) do
+    file_action(
+      path,
+      ~s|set target of Finder window id #{id} to POSIX file "#{ExMacOSControl.Script.escape_string(path)}"|,
+      opts
+    )
+  end
+
+  def rename(path, name, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.required_string(name, "File name"),
+         false <- String.contains?(name, "/") do
+      file_action(
+        path,
+        ~s|set name of (POSIX file "#{ExMacOSControl.Script.escape_string(path)}" as alias) to "#{ExMacOSControl.Script.escape_string(name)}"|,
+        opts
+      )
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("File name must be a single path component")}
+    end
+  end
+
+  def copy(path, destination, opts \\ []), do: transfer("duplicate", path, destination, opts)
+  def move(path, destination, opts \\ []), do: transfer("move", path, destination, opts)
+
+  def move_to_trash(path, opts \\ []),
+    do: ExMacOSControl.with_options(opts, fn -> ExMacOSControl.SystemEvents.trash_file(path) end)
+
+  def create_folder(parent, name, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.required_string(name, "Folder name"),
+         true <- File.dir?(parent) and not String.contains?(name, "/"),
+         false <- File.exists?(Path.join(parent, name)) do
+      file_action(
+        parent,
+        ~s|make new folder at POSIX file "#{ExMacOSControl.Script.escape_string(Path.expand(parent))}" with properties {name:"#{ExMacOSControl.Script.escape_string(name)}"}|,
+        opts
+      )
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Parent must exist and folder must be new")}
+    end
+  end
+
+  def set_selection(paths, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :max_output_bytes]),
+         true <- is_list(paths) and Enum.all?(paths, &(is_binary(&1) and File.exists?(&1))) do
+      script = """
+      on run argv
+        set selectedItems to {}
+        repeat with p in argv
+          set end of selectedItems to (POSIX file (contents of p) as alias)
+        end repeat
+        tell application "Finder" to set selection to selectedItems
+      end run
+      """
+
+      execution =
+        opts
+        |> ExMacOSControl.Automation.execution_options()
+        |> Keyword.put_new(:timeout, 30_000)
+        |> Keyword.put(:args, Enum.map(paths, &Path.expand/1))
+
+      case ExMacOSControl.run_applescript(script, execution) do
+        {:ok, _} -> :ok
+        error -> error
+      end
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Selection must contain existing paths")}
+    end
+  end
+
+  def metadata(path, opts \\ []) do
+    if is_binary(path) and File.exists?(path) do
+      ExMacOSControl.Automation.query(
+        nil,
+        "ObjC.import('Foundation');var a=$.NSFileManager.defaultManager.attributesOfItemAtPathError($(input.path),null);if(!a)throw new Error('Metadata unavailable');return {path:input.path,size:ObjC.unwrap(a.objectForKey($.NSFileSize)),created_at:iso(ObjC.unwrap(a.objectForKey($.NSFileCreationDate))),modified_at:iso(ObjC.unwrap(a.objectForKey($.NSFileModificationDate)))};",
+        %{path: Path.expand(path)},
+        opts
+      )
+    else
+      {:error, Error.not_found("File not found")}
+    end
+  end
+
+  def list_volumes(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.finder",
+        "app.disks",
+        [name: "o.name()", url: "o.url()", capacity: "o.capacity()", free_space: "o.freeSpace()"],
+        %{},
+        opts
+      )
+
+  def eject(path, opts \\ []),
+    do: file_action(path, ~s|eject (POSIX file "#{ExMacOSControl.Script.escape_string(path)}" as alias)|, opts)
+
+  def get_selection(opts), do: ExMacOSControl.with_options(opts, &get_selection/0)
+  def get_current_folder(opts), do: ExMacOSControl.with_options(opts, &get_current_folder/0)
+  def open_location(path, opts), do: ExMacOSControl.with_options(opts, fn -> open_location(path) end)
+  def new_window(path, opts), do: ExMacOSControl.with_options(opts, fn -> new_window(path) end)
+  def set_view(view, opts), do: ExMacOSControl.with_options(opts, fn -> set_view(view) end)
+
+  defp transfer(command, path, destination, opts) do
+    if is_binary(path) and is_binary(destination) and File.exists?(path) and File.dir?(destination) and
+         not File.exists?(Path.join(destination, Path.basename(path))) do
+      file_action(
+        path,
+        ~s|#{command} (POSIX file "#{ExMacOSControl.Script.escape_string(Path.expand(path))}" as alias) to (POSIX file "#{ExMacOSControl.Script.escape_string(Path.expand(destination))}" as alias) without replacing|,
+        opts
+      )
+    else
+      {:error, Error.execution_error("Source and destination must exist and destination item must be new")}
+    end
+  end
+
+  defp file_action(path, command, opts) do
+    if is_binary(path) and File.exists?(path) do
+      execute_file_action(command, opts)
+    else
+      {:error, Error.not_found("File not found")}
+    end
+  end
+
+  defp execute_file_action(command, opts) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :max_output_bytes]) do
+      execution = opts |> ExMacOSControl.Automation.execution_options() |> Keyword.put_new(:timeout, 30_000)
+
+      ExMacOSControl.with_options(execution, fn -> run_file_command(command) end)
+    end
+  end
+
+  defp run_file_command(command) do
+    case ExMacOSControl.run_applescript("tell application \"Finder\"\n#{command}\nend tell") do
+      {:ok, _} -> :ok
+      error -> error
+    end
+  end
 end

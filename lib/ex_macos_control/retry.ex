@@ -72,22 +72,25 @@ defmodule ExMacOSControl.Retry do
 
   ## Parameters
 
-  - `fun` - A zero-arity function that returns `{:ok, result}` or `{:error, error}`
+  - `fun` - A zero-arity function that returns `:ok`, `{:ok, result}`, or `{:error, error}`
   - `opts` - Keyword list of options:
     - `:max_attempts` - Maximum number of attempts (default: 3)
     - `:backoff` - Backoff strategy, `:exponential` or `:linear` (default: `:exponential`)
+    - `:idempotent` - Allow retrying an unknown-outcome timeout (default false)
 
   ## Returns
 
   - `{:ok, result}` - If the function succeeds within max attempts
+  - `:ok` - If an action succeeds
   - `{:error, error}` - If all attempts fail or a non-retryable error occurs
 
   Invalid options raise `ArgumentError` before the function is called.
 
   ## Retry Behavior
 
-  Only timeout errors (errors with `type: :timeout`) are retried. All other errors
-  are returned immediately without retrying.
+  Only timeout errors are retried. A native timeout with `details.outcome: :unknown`
+  is returned immediately unless `idempotent: true` is explicit. All other errors
+  are returned immediately.
 
   ## Examples
 
@@ -118,52 +121,52 @@ defmodule ExMacOSControl.Retry do
       iex> Retry.with_retry(fn -> {:ok, "done"} end, max_attempts: 5, backoff: :linear)
       {:ok, "done"}
   """
-  @spec with_retry(fun :: (-> {:ok, any()} | {:error, any()}), opts :: keyword()) ::
-          {:ok, any()} | {:error, any()}
+  @spec with_retry(fun :: (-> :ok | {:ok, any()} | {:error, any()}), opts :: keyword()) ::
+          :ok | {:ok, any()} | {:error, any()}
   def with_retry(fun, opts \\ []) when is_function(fun, 0) and is_list(opts) do
-    max_attempts = Keyword.get(opts, :max_attempts, 3)
-    backoff = Keyword.get(opts, :backoff, :exponential)
-
-    unless is_integer(max_attempts) and max_attempts > 0 do
-      raise ArgumentError, ":max_attempts must be a positive integer"
-    end
-
-    unless backoff in [:exponential, :linear] do
-      raise ArgumentError, ":backoff must be :exponential or :linear"
-    end
+    {max_attempts, backoff, idempotent} = validate_retry_options!(opts)
 
     metadata = %{max_attempts: max_attempts, backoff: backoff}
     :telemetry.execute([:ex_macos_control, :retry, :start], %{}, metadata)
 
-    result = do_retry(fun, 1, max_attempts, backoff)
+    result = do_retry(fun, 1, max_attempts, backoff, idempotent)
 
     case result do
+      :ok ->
+        :telemetry.execute([:ex_macos_control, :retry, :stop], %{}, metadata)
+
       {:ok, _} ->
         :telemetry.execute([:ex_macos_control, :retry, :stop], %{}, metadata)
 
       {:error, error} ->
-        :telemetry.execute([:ex_macos_control, :retry, :error], %{}, Map.put(metadata, :error, error))
+        :telemetry.execute([:ex_macos_control, :retry, :error], %{}, Map.put(metadata, :error, error_metadata(error)))
     end
 
     result
   end
 
   # Recursively attempts to execute the function with retry logic
-  defp do_retry(fun, attempt, max_attempts, backoff) do
+  defp do_retry(fun, attempt, max_attempts, backoff, idempotent) do
     metadata = %{attempt: attempt, max_attempts: max_attempts, backoff: backoff}
     :telemetry.execute([:ex_macos_control, :retry, :attempt], %{attempt: attempt}, metadata)
 
     case fun.() do
+      :ok ->
+        :ok
+
       {:ok, result} ->
         {:ok, result}
 
+      {:error, %{type: :timeout, details: %{outcome: :unknown}} = error} when not idempotent ->
+        {:error, error}
+
       {:error, %{type: :timeout} = error} when attempt < max_attempts ->
         sleep_time = calculate_backoff(attempt, backoff)
-        metadata_with_sleep = Map.merge(metadata, %{sleep_time: sleep_time, error: error})
+        metadata_with_sleep = Map.merge(metadata, %{sleep_time: sleep_time, error: error_metadata(error)})
         :telemetry.execute([:ex_macos_control, :retry, :sleep], %{sleep_time: sleep_time}, metadata_with_sleep)
 
         Process.sleep(sleep_time)
-        do_retry(fun, attempt + 1, max_attempts, backoff)
+        do_retry(fun, attempt + 1, max_attempts, backoff, idempotent)
 
       {:error, reason} ->
         {:error, reason}
@@ -183,4 +186,28 @@ defmodule ExMacOSControl.Retry do
     # Linear: constant 1000ms (1 second)
     1000
   end
+
+  defp validate_retry_options!(opts) do
+    unless Keyword.keyword?(opts) and Keyword.keys(opts) -- [:max_attempts, :backoff, :idempotent] == [] do
+      raise ArgumentError, "Unknown or invalid retry options"
+    end
+
+    idempotent = Keyword.get(opts, :idempotent, false)
+    unless is_boolean(idempotent), do: raise(ArgumentError, ":idempotent must be a boolean")
+    max_attempts = Keyword.get(opts, :max_attempts, 3)
+    backoff = Keyword.get(opts, :backoff, :exponential)
+
+    unless is_integer(max_attempts) and max_attempts > 0 do
+      raise ArgumentError, ":max_attempts must be a positive integer"
+    end
+
+    unless backoff in [:exponential, :linear] do
+      raise ArgumentError, ":backoff must be :exponential or :linear"
+    end
+
+    {max_attempts, backoff, idempotent}
+  end
+
+  defp error_metadata(%{type: type}), do: %{type: type}
+  defp error_metadata(_), do: %{type: :unknown}
 end

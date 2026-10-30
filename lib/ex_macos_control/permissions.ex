@@ -36,6 +36,8 @@ defmodule ExMacOSControl.Permissions do
         {:ok, :granted} -> :ok
         {:ok, :not_granted} ->
           Permissions.show_automation_help("Safari")
+        {:error, reason} ->
+          IO.inspect(reason)
       end
 
       # Open System Preferences to the right pane
@@ -137,47 +139,36 @@ defmodule ExMacOSControl.Permissions do
 
         {:ok, :not_granted} ->
           show_automation_help("Safari")
+        {:error, reason} ->
+          IO.inspect(reason)
       end
 
   ## How It Works
 
-  Attempts to get a simple property from the target application.
-  If it succeeds, permission is granted. If it fails with a permission error,
-  permission is not granted.
+  Uses the supported wildcard Apple-event permission query without prompting or
+  launching the target. A stopped target returns an error because its permission
+  cannot be established. Use preflight_automation/2 for the distinct states.
   """
   @spec check_automation(String.t()) :: {:ok, :granted | :not_granted} | {:error, Error.t()}
   def check_automation(app_name) do
-    script = """
-    tell application "#{escape_quotes(app_name)}"
-      try
-        get name
-        return "granted"
-      on error errMsg number errNum
-        if errMsg contains "not allowed" or errMsg contains "not authorized" then
-          return "not_granted"
-        else
-          error errMsg number errNum
-        end if
-      end try
-    end tell
-    """
-
-    case adapter().run_applescript(script) do
-      {:ok, "granted"} ->
+    case automation_status(app_name, false, []) do
+      {:ok, :granted} ->
         {:ok, :granted}
 
-      {:ok, "not_granted"} ->
+      {:ok, status} when status in [:denied, :requires_consent] ->
         {:ok, :not_granted}
 
-      {:error, %Error{type: :permission_denied}} ->
-        {:ok, :not_granted}
+      {:ok, :not_running} ->
+        {:error, Error.execution_error("Application is not running; automation authorization is unknown")}
 
-      {:error, %Error{message: msg} = error} ->
-        if String.contains?(msg, "not allowed") or String.contains?(msg, "not authorized") do
-          {:ok, :not_granted}
-        else
-          {:error, error}
-        end
+      {:ok, :unavailable} ->
+        {:error, Error.not_found("Application not found")}
+
+      {:ok, :unknown} ->
+        {:error, Error.execution_error("Unable to determine automation authorization")}
+
+      error ->
+        error
     end
   end
 
@@ -419,8 +410,50 @@ defmodule ExMacOSControl.Permissions do
   defp extract_status({:ok, status}), do: status
   defp extract_status({:error, _}), do: :error
 
-  # Escape quotes in strings
-  defp escape_quotes(str) do
-    ExMacOSControl.Script.escape_string(str)
+  @doc "Checks wildcard Apple-event authorization without prompting or launching a target. The target must already be running."
+  def preflight_automation(identity, opts \\ []), do: automation_status(identity, false, opts)
+
+  @doc "Explicitly requests Apple-event authorization for an already running target; may display a macOS consent prompt."
+  def request_automation(identity, opts \\ []), do: automation_status(identity, true, opts)
+
+  @doc "Returns accessibility and automation states for the requested app identities."
+  def diagnose(identities, opts \\ []) when is_list(identities) do
+    %{
+      accessibility: check_accessibility(),
+      automation: Map.new(identities, fn id -> {id, preflight_automation(id, opts)} end)
+    }
+  end
+
+  defp automation_status(identity, prompt, opts) do
+    alias ExMacOSControl.Automation
+
+    with :ok <- Automation.required_string(identity, "Application identity"),
+         {:ok, code} <-
+           Automation.query(
+             nil,
+             """
+             ObjC.import('Cocoa');
+             ObjC.import('CoreServices');
+             ObjC.bindFunction('AEDeterminePermissionToAutomateTarget',['int',['void *','unsigned int','unsigned int','bool']]);
+             var workspace=$.NSWorkspace.sharedWorkspace;
+             var url=workspace.URLForApplicationWithBundleIdentifier($(input.identity));
+             var path=url ? url.path : workspace.fullPathForApplication($(input.identity));
+             if(!path && /\\.app$/.test(input.identity)) path=$(input.identity);
+             if(!path) return -10814;
+             var bundle=$.NSBundle.bundleWithPath(path), identifier=bundle.bundleIdentifier;
+             if(!identifier) return -10814;
+             var target=$.NSAppleEventDescriptor.descriptorWithBundleIdentifier(identifier);
+             return $.AEDeterminePermissionToAutomateTarget(target.aeDesc,0x2a2a2a2a,0x2a2a2a2a,input.prompt);
+             """,
+             %{identity: identity, prompt: prompt},
+             opts
+           ) do
+      {:ok,
+       Map.get(
+         %{0 => :granted, -1743 => :denied, -1744 => :requires_consent, -600 => :not_running, -10_814 => :unavailable},
+         code,
+         :unknown
+       )}
+    end
   end
 end

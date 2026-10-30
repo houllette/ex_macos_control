@@ -8,6 +8,22 @@ defmodule ExMacOSControl.RetryTest do
     send(config.test_pid, {:telemetry, event, measurements, metadata})
   end
 
+  test "accepts action acknowledgements and refuses unknown outcomes unless explicitly idempotent" do
+    assert :ok = ExMacOSControl.Retry.with_retry(fn -> :ok end)
+    ref = make_ref()
+    error = ExMacOSControl.Error.timeout("Unknown effect", outcome: :unknown)
+
+    fun = fn ->
+      Process.put(ref, Process.get(ref, 0) + 1)
+      {:error, error}
+    end
+
+    assert {:error, ^error} = ExMacOSControl.Retry.with_retry(fun, max_attempts: 3)
+    assert Process.get(ref) == 1
+    assert {:error, ^error} = ExMacOSControl.Retry.with_retry(fun, max_attempts: 2, idempotent: true)
+    assert Process.get(ref) == 3
+  end
+
   describe "with_retry/2" do
     test "rejects invalid options before invoking the operation" do
       operation = fn -> send(self(), :invoked) end
@@ -303,7 +319,7 @@ defmodule ExMacOSControl.RetryTest do
 
       # Should receive error event with error metadata
       assert_received {:telemetry, [:ex_macos_control, :retry, :error], %{},
-                       %{error: ^error, max_attempts: 1, backoff: :exponential}}
+                       %{error: %{type: :timeout}, max_attempts: 1, backoff: :exponential}}
 
       refute_received {:telemetry, [:ex_macos_control, :retry, :stop], _, _}
     end

@@ -78,7 +78,7 @@ defmodule ExMacOSControl.SystemEvents do
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
-    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+    ExMacOSControl
   end
 
   @doc """
@@ -158,8 +158,7 @@ defmodule ExMacOSControl.SystemEvents do
 
     case adapter().run_applescript(script) do
       {:ok, output} ->
-        result = parse_boolean(output)
-        {:ok, result}
+        parse_boolean(output)
 
       {:error, reason} ->
         {:error, reason}
@@ -369,6 +368,7 @@ defmodule ExMacOSControl.SystemEvents do
     script = """
     tell application "System Events"
       tell process "#{escape_quotes(app_name)}"
+        set frontmost to true
         keystroke "#{escape_quotes(key)}"
       end tell
     end tell
@@ -421,7 +421,20 @@ defmodule ExMacOSControl.SystemEvents do
 
   """
   @spec press_key(String.t(), String.t(), using: [atom()]) :: :ok | {:error, Error.t()}
-  def press_key(app_name, key, using: modifiers) when is_list(modifiers) do
+  def press_key(app_name, key, opts) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:using, :timeout, :max_output_bytes]),
+         modifiers = Keyword.get(opts, :using, []),
+         true <- is_list(modifiers) do
+      ExMacOSControl.with_options(Keyword.take(opts, [:timeout, :max_output_bytes]), fn ->
+        press_key_with_modifiers(app_name, key, modifiers)
+      end)
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Modifiers must be a list")}
+    end
+  end
+
+  defp press_key_with_modifiers(app_name, key, modifiers) do
     # Validate modifiers
     case validate_modifiers(modifiers) do
       :ok ->
@@ -430,7 +443,8 @@ defmodule ExMacOSControl.SystemEvents do
         script = """
         tell application "System Events"
           tell process "#{escape_quotes(app_name)}"
-            keystroke "#{escape_quotes(key)}" using {#{modifier_string}}
+            set frontmost to true
+        keystroke "#{escape_quotes(key)}" using {#{modifier_string}}
           end tell
         end tell
         """
@@ -498,12 +512,14 @@ defmodule ExMacOSControl.SystemEvents do
           set pos to position of w
           set sz to size of w
           set t to title of w
-          return (item 1 of pos) & ", " & (item 2 of pos) & ", " & (item 1 of sz) & ", " & (item 2 of sz) & ", " & t
+          if t is missing value then set t to ""
+          return my exmc_encode_rows({{item 1 of pos, item 2 of pos, item 1 of sz, item 2 of sz, t}})
         else
           return ""
         end if
       end tell
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
@@ -558,7 +574,15 @@ defmodule ExMacOSControl.SystemEvents do
   """
   @spec set_window_bounds(String.t(), position: [integer()], size: [integer()]) ::
           :ok | {:error, Error.t()}
-  def set_window_bounds(app_name, position: position, size: size) do
+  def set_window_bounds(app_name, opts) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:position, :size, :timeout, :max_output_bytes]) do
+      ExMacOSControl.with_options(Keyword.take(opts, [:timeout, :max_output_bytes]), fn ->
+        set_window_bounds_values(app_name, opts[:position], opts[:size])
+      end)
+    end
+  end
+
+  defp set_window_bounds_values(app_name, position, size) do
     # Validate parameters
     with :ok <- validate_position(position),
          :ok <- validate_size(size) do
@@ -751,15 +775,15 @@ defmodule ExMacOSControl.SystemEvents do
   ## Private Helpers
 
   # Parses a boolean result from AppleScript output
-  @spec parse_boolean(String.t()) :: boolean()
+  @spec parse_boolean(String.t()) :: {:ok, boolean()} | {:error, Error.t()}
   defp parse_boolean(output) do
     output
     |> String.trim()
     |> String.downcase()
     |> case do
-      "true" -> true
-      "false" -> false
-      _ -> false
+      "true" -> {:ok, true}
+      "false" -> {:ok, false}
+      _ -> {:error, Error.execution_error("Invalid process boolean output")}
     end
   end
 
@@ -799,16 +823,14 @@ defmodule ExMacOSControl.SystemEvents do
           {:ok, %{position: [integer()], size: [integer()], title: String.t()}}
           | {:error, Error.t()}
   defp parse_window_properties(output) do
-    parts = String.split(output, ", ", parts: 5)
-
-    with [x, y, width, height, title] <- parts,
+    with {:ok, [[x, y, width, height, title]]} <- ScriptOutput.decode(output, 5),
          {x, ""} <- Integer.parse(x),
          {y, ""} <- Integer.parse(y),
-         {width, ""} <- Integer.parse(width),
-         {height, ""} <- Integer.parse(height) do
-      {:ok, %{position: [x, y], size: [width, height], title: String.trim(title)}}
+         {width, ""} when width > 0 <- Integer.parse(width),
+         {height, ""} when height > 0 <- Integer.parse(height) do
+      {:ok, %{position: [x, y], size: [width, height], title: title}}
     else
-      _ -> {:error, Error.execution_error("Failed to parse window properties", output: output)}
+      _ -> {:error, Error.execution_error("Failed to parse window properties")}
     end
   end
 
@@ -848,5 +870,212 @@ defmodule ExMacOSControl.SystemEvents do
     with {:ok, rows} <- ScriptOutput.decode(output, 1) do
       {:ok, List.flatten(rows)}
     end
+  end
+
+  @doc "Inspects a bounded accessibility tree."
+  defdelegate ui_tree(process, opts \\ []), to: ExMacOSControl.Accessibility, as: :tree
+  defdelegate get_attribute(process, path, attribute, opts \\ []), to: ExMacOSControl.Accessibility
+  defdelegate set_attribute(process, path, attribute, value, opts \\ []), to: ExMacOSControl.Accessibility
+  defdelegate perform_action(process, path, action, opts \\ []), to: ExMacOSControl.Accessibility
+  defdelegate click_element(process, path, opts \\ []), to: ExMacOSControl.Accessibility, as: :click
+  defdelegate press_key_code(process, code, opts \\ []), to: ExMacOSControl.Accessibility
+  defdelegate click_menu_path(process, path, opts \\ []), to: ExMacOSControl.Accessibility
+  defdelegate wait_for_element(process, path, opts \\ []), to: ExMacOSControl.Accessibility, as: :wait_for
+
+  def click_button(title, process, opts \\ []) do
+    ExMacOSControl.Accessibility.click(
+      process,
+      [%{role: "AXWindow", index: 1}, %{role: "AXButton", title: title}],
+      opts
+    )
+  end
+
+  def list_processes(opts), do: ExMacOSControl.with_options(opts, &list_processes/0)
+  def process_exists?(name, opts), do: ExMacOSControl.with_options(opts, fn -> process_exists?(name) end)
+  def quit_application(name, opts), do: ExMacOSControl.with_options(opts, fn -> quit_application(name) end)
+  def launch_application(name, opts), do: ExMacOSControl.with_options(opts, fn -> launch_application(name) end)
+  def activate_application(name, opts), do: ExMacOSControl.with_options(opts, fn -> activate_application(name) end)
+
+  def click_menu_item(name, menu, item, opts),
+    do: ExMacOSControl.with_options(opts, fn -> click_menu_item(name, menu, item) end)
+
+  def get_window_properties(name, opts), do: ExMacOSControl.with_options(opts, fn -> get_window_properties(name) end)
+  def reveal_in_finder(path, opts), do: ExMacOSControl.with_options(opts, fn -> reveal_in_finder(path) end)
+  def get_selected_finder_items(opts), do: ExMacOSControl.with_options(opts, &get_selected_finder_items/0)
+  def trash_file(path, opts), do: ExMacOSControl.with_options(opts, fn -> trash_file(path) end)
+
+  def appearance(opts \\ []),
+    do:
+      ExMacOSControl.Automation.query(
+        "com.apple.systemevents",
+        "return {dark_mode:app.appearancePreferences.darkMode()};",
+        %{},
+        opts
+      )
+
+  def set_dark_mode(enabled, opts \\ []) when is_boolean(enabled),
+    do:
+      ExMacOSControl.Automation.action(
+        "com.apple.systemevents",
+        "app.appearancePreferences.darkMode=input.enabled;",
+        %{enabled: enabled},
+        opts
+      )
+
+  def list_login_items(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.systemevents",
+        "app.loginItems",
+        [name: "o.name()", path: "o.path()", hidden: "o.hidden()"],
+        %{},
+        opts
+      )
+
+  def add_login_item(path, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:hidden, :timeout, :max_output_bytes]),
+         true <- is_binary(path) and File.exists?(path),
+         true <- is_boolean(Keyword.get(opts, :hidden, false)) do
+      ExMacOSControl.Automation.action(
+        "com.apple.systemevents",
+        "app.loginItems.push(app.LoginItem({path:input.path,hidden:input.hidden}));",
+        %{path: Path.expand(path), hidden: Keyword.get(opts, :hidden, false)},
+        ExMacOSControl.Automation.execution_options(opts)
+      )
+    else
+      {:error, _} = error -> error
+      _ -> {:error, Error.execution_error("Login item path must exist and hidden must be a boolean")}
+    end
+  end
+
+  def remove_login_item(path, opts \\ []) do
+    ExMacOSControl.Automation.action(
+      "com.apple.systemevents",
+      "var items=app.loginItems.whose({path:input.path})();if(items.length!==1)throw new Error('Missing or ambiguous login item');app.delete(items[0]);",
+      %{path: Path.expand(path)},
+      opts
+    )
+  end
+
+  def list_folder_actions(opts \\ []),
+    do:
+      ExMacOSControl.Resources.list(
+        "com.apple.systemevents",
+        "app.folderActions",
+        [
+          name: "o.name()",
+          path: "o.path()",
+          enabled: "o.enabled()",
+          scripts: "o.scripts().map(function(s){return {name:s.name(),path:s.path(),enabled:s.enabled()};})"
+        ],
+        %{},
+        opts
+      )
+
+  @doc "Attaches a script to an existing folder. Does not change the global Folder Actions setting."
+  def attach_folder_action(folder, script_path, opts \\ []) do
+    alias ExMacOSControl.Automation
+
+    with :ok <- Automation.options(opts, [:enabled, :timeout, :max_output_bytes]),
+         true <- is_binary(folder) and File.dir?(folder),
+         true <- is_binary(script_path) and File.regular?(script_path),
+         enabled = Keyword.get(opts, :enabled, true),
+         true <- is_boolean(enabled) do
+      body = """
+      if (count of matches) is 0 then
+        set actionItem to make new folder action with properties {path:watchedPath, enabled:desiredEnabled}
+      else
+        set actionItem to item 1 of matches
+      end if
+      set scriptPath to item 2 of argv
+      tell actionItem
+        set attachedScripts to every script whose POSIX path is scriptPath
+        if (count of attachedScripts) > 1 then error "Ambiguous attached script"
+        if (count of attachedScripts) is 0 then
+          make new script with properties {POSIX path:scriptPath, enabled:desiredEnabled}
+        else
+          set enabled of item 1 of attachedScripts to desiredEnabled
+        end if
+      end tell
+      """
+
+      folder_action(folder, body, [Path.expand(script_path), to_string(enabled)], opts)
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Folder action needs an existing folder, script file, and boolean enabled option")
+    end
+  end
+
+  def detach_folder_action(folder, script_path, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.required_string(script_path, "Script path") do
+      body = """
+      if (count of matches) is not 1 then error "Folder action not found"
+      set actionItem to item 1 of matches
+      set scriptPath to item 2 of argv
+      tell actionItem
+        set attachedScripts to every script whose POSIX path is scriptPath
+        if (count of attachedScripts) is not 1 then error "Missing or ambiguous attached script"
+        delete item 1 of attachedScripts
+      end tell
+      """
+
+      folder_action(folder, body, [Path.expand(script_path), "false"], opts)
+    end
+  end
+
+  def set_folder_action_enabled(folder, enabled, opts \\ []) when is_boolean(enabled) do
+    folder_action(
+      folder,
+      "if (count of matches) is not 1 then error \"Folder action not found\"\nset enabled of item 1 of matches to desiredEnabled",
+      ["", to_string(enabled)],
+      opts
+    )
+  end
+
+  def set_folder_actions_enabled(enabled, opts \\ []) when is_boolean(enabled),
+    do:
+      ExMacOSControl.Automation.action(
+        "com.apple.systemevents",
+        "app.folderActionsEnabled=input.enabled;",
+        %{enabled: enabled},
+        opts
+      )
+
+  defp folder_action(folder, body, args, opts) do
+    alias ExMacOSControl.Automation
+
+    with :ok <- Automation.required_string(folder, "Folder path"),
+         :ok <- Automation.options(opts, [:enabled, :timeout, :max_output_bytes]) do
+      source = """
+      on run argv
+        set watchedPath to ((POSIX file (item 1 of argv)) as alias) as text
+        set desiredEnabled to (item 3 of argv is "true")
+        tell application "System Events"
+          set matches to every folder action whose path is watchedPath
+          if (count of matches) > 1 then error "Ambiguous folder action"
+          #{body}
+        end tell
+        return true
+      end run
+      """
+
+      execution =
+        opts
+        |> Automation.execution_options()
+        |> Keyword.put_new(:timeout, 30_000)
+        |> Keyword.put(:args, [Path.expand(folder) | args])
+
+      case ExMacOSControl.run_applescript(source, execution) do
+        {:ok, "true"} -> :ok
+        {:error, _} = error -> error
+        _ -> Automation.invalid("Folder action was not acknowledged")
+      end
+    end
+  end
+
+  @doc "Invokes an explicit power/session action. This can terminate the current desktop session."
+  def power(action, opts \\ []) when action in [:sleep, :restart, :shut_down, :log_out] do
+    command = %{sleep: "sleep", restart: "restart", shut_down: "shutDown", log_out: "logOut"}[action]
+    ExMacOSControl.Automation.action("com.apple.systemevents", "app.#{command}();", %{}, opts)
   end
 end

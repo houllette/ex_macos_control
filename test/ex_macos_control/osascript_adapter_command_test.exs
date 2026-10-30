@@ -47,12 +47,12 @@ defmodule ExMacOSControl.OSAScriptAdapterCommandTest do
 
   test "passes inline scripts and arguments as separate command arguments", %{args_file: file} do
     assert {:ok, "result"} = OSAScriptAdapter.run_applescript("return 1", args: ["a b", "--flag"])
-    assert File.read!(file) == "-e\nreturn 1\na b\n--flag\n"
+    assert File.read!(file) == "-e\nreturn 1\n--\na b\n--flag\n"
   end
 
   test "uses the JavaScript interpreter and passes arguments", %{args_file: file} do
     assert {:ok, "result"} = OSAScriptAdapter.run_javascript("1 + 1", args: ["value"], timeout: 1000)
-    assert File.read!(file) == "-l\nJavaScript\n-e\n1 + 1\nvalue\n"
+    assert File.read!(file) == "-l\nJavaScript\n-e\n1 + 1\n--\nvalue\n"
   end
 
   test "honors timeouts for AppleScript, JXA, script files, and Shortcuts", %{directory: directory} do
@@ -148,7 +148,7 @@ defmodule ExMacOSControl.OSAScriptAdapterCommandTest do
     assert File.read!(file) ==
              "-e\n" <>
                ~S(tell application "Shortcuts Events" to run shortcut "Name\\\"quoted" with input "Input\\\"quoted") <>
-               "\n"
+               "\n--\n"
   end
 
   test "serializes structured Shortcut input once as JSON, then escapes it as AppleScript", %{
@@ -164,6 +164,6 @@ defmodule ExMacOSControl.OSAScriptAdapterCommandTest do
     script = Path.join(directory, "script.JXA")
     File.write!(script, "1 + 1")
     assert {:ok, "result"} = OSAScriptAdapter.run_script_file(script, args: ["a b"])
-    assert File.read!(file) == "-l\nJavaScript\n#{script}\na b\n"
+    assert File.read!(file) == "-l\nJavaScript\n--\n#{script}\na b\n"
   end
 end

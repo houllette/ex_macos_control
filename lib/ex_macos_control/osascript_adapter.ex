@@ -11,16 +11,16 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   - Execute AppleScript code with timeout and argument support
   - Execute JXA code with timeout and argument support
   - Comprehensive error handling with `ExMacOSControl.Error`
-  - Platform-independent timeout implementation using `Task`
+  - Owned native process groups with deadlines and bounded output
   - Run macOS Shortcuts
 
   ## Implementation Details
 
-  - Uses `System.cmd/3` to execute `osascript` with the provided script
+  - Uses `ExMacOSControl.Command` to execute `osascript` with the provided script
   - Returns `{:ok, output}` on success (exit code 0)
   - Returns `{:error, error}` on failure with detailed error information
   - Trims whitespace from successful output
-  - Supports timeout via `Task.yield/2` and `Task.shutdown/1`
+  - Terminates the owned native process group when a deadline expires
   - Supports both AppleScript (default) and JXA (`-l JavaScript` flag)
   - Arguments are passed directly to osascript (secure, no shell interpretation)
 
@@ -85,8 +85,8 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   Arguments are passed directly to `osascript` without shell interpretation,
   making them safe from shell injection attacks. However, the AppleScript/JXA
-  code itself should be from trusted sources as it executes with full
-  system access.
+  code itself should be from trusted sources as it executes with the caller's
+  OS privileges and macOS permissions.
   """
 
   @behaviour ExMacOSControl.Adapter
@@ -132,6 +132,11 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     * `opts` - Keyword list of options:
       * `:timeout` - Non-negative milliseconds to wait; `nil`/`:infinity` waits indefinitely
       * `:args` - List of string arguments to pass to the script
+    * `:output` - `:text` (default), `:source`, `:json` (decode returned JSON text), or `:execution` (stdout/stderr/status)
+    * `:trim` - Trim text output (default true); false preserves whitespace
+    * `:telemetry_script` - Include a source preview in telemetry (default false)
+    * `:max_output_bytes` - Combined stdout/stderr limit (default 10 MiB)
+    * `:stdin` - Supply inline source through stdin; large source uses this automatically
 
   ## Returns
 
@@ -140,10 +145,9 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   ## Timeout Behavior
 
-  When a timeout is specified, the script execution is monitored via a `Task`.
-  If the script doesn't complete within the timeout period, the waiting task is
-  stopped and a timeout error is returned. This does not guarantee cancellation
-  of the OS process or actions already dispatched to macOS applications. Do not
+  When a deadline expires, the owned native process group is terminated and a
+  timeout error is returned. Actions already dispatched to other macOS applications
+  have an unknown outcome and cannot be recalled. Do not
   automatically retry non-idempotent actions such as sending messages.
 
   ## Argument Passing
@@ -178,18 +182,10 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   """
   @spec run_applescript(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+          {:ok, term()} | {:error, ExMacOSControl.Error.t()}
   @impl true
   def run_applescript(script, opts) when is_list(opts) do
-    # Extract options
-    timeout = Keyword.get(opts, :timeout)
-    args = Keyword.get(opts, :args, [])
-
-    # Build command arguments: ["-e", script] ++ args
-    cmd_args = ["-e", script] ++ args
-
-    # Execute with or without timeout
-    run_command("osascript", cmd_args, timeout)
+    execute_script(script, opts, :applescript)
   end
 
   @doc """
@@ -277,158 +273,120 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   """
   @spec run_javascript(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+          {:ok, term()} | {:error, ExMacOSControl.Error.t()}
   @impl true
   def run_javascript(script, opts) do
-    timeout = Keyword.get(opts, :timeout)
-    args = Keyword.get(opts, :args, [])
-    cmd_args = ["-l", "JavaScript", "-e", script] ++ args
-
-    run_command("osascript", cmd_args, timeout)
+    execute_script(script, opts, :javascript)
   end
 
-  # Validate before starting a task or OS process, particularly for non-idempotent actions.
-  defp run_command(cmd, args, nil), do: run_without_timeout(cmd, args)
-  defp run_command(cmd, args, :infinity), do: run_without_timeout(cmd, args)
+  defp execute_script(script, opts, language) do
+    with :ok <- validate_options(opts),
+         true <- is_binary(script) || {:error, Error.execution_error("Script must be a string")} do
+      prefix = if language == :javascript, do: ["-l", "JavaScript"], else: []
+      style = if Keyword.get(opts, :output) == :source, do: ["-s", "s"], else: []
 
-  defp run_command(cmd, args, timeout) when is_integer(timeout) and timeout >= 0 do
-    run_with_timeout(cmd, args, timeout)
-  end
-
-  defp run_command(_cmd, _args, _timeout) do
-    {:error, Error.execution_error("Timeout must be a non-negative integer, :infinity, or nil")}
-  end
-
-  # Extracts the script content from osascript arguments
-  # Args format: ["-e", script, ...] or ["-l", "JavaScript", "-e", script, ...] or [file_path, ...]
-  defp extract_script_from_args(args) do
-    case args do
-      ["-e", script | _] -> script
-      ["-l", "JavaScript", "-e", script | _] -> script
-      [file_path | _] when is_binary(file_path) -> Path.basename(file_path)
-      _ -> ""
-    end
-  end
-
-  # Catch spawn failures inside the task as well as during synchronous execution.
-  defp execute_command(cmd, args) do
-    System.cmd(cmd, args, stderr_to_stdout: true)
-  rescue
-    error in ErlangError ->
-      {:error, Error.execution_error("Unable to execute #{cmd}", reason: error.original, command: cmd)}
-  end
-
-  # Private function to run command with timeout using Task
-  defp run_with_timeout(cmd, args, timeout) do
-    script = extract_script_from_args(args)
-
-    metadata = %{
-      command: cmd,
-      script: String.slice(script, 0, 100),
-      timeout: timeout
-    }
-
-    measurements = %{
-      script_length: String.length(script)
-    }
-
-    start_time = System.monotonic_time()
-    :telemetry.execute([:ex_macos_control, :applescript, :start], measurements, metadata)
-
-    task =
-      Task.async(fn ->
-        execute_command(cmd, args)
-      end)
-
-    result =
-      case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-        {:ok, {output, 0}} ->
-          {:ok, String.trim(output)}
-
-        {:ok, {:error, error}} ->
-          {:error, error}
-
-        {:ok, {stderr, exit_code}} ->
-          {:error, Error.parse_osascript_error(stderr, exit_code)}
-
-        nil ->
-          {:error, Error.timeout("Script execution", timeout: timeout)}
+      if Keyword.get(opts, :stdin, false) or byte_size(script) > 65_536 do
+        args = prefix ++ style ++ ["--", "-"] ++ Keyword.get(opts, :args, [])
+        run_command("osascript", args, Keyword.put(opts, :input, script), script)
+      else
+        args = prefix ++ style ++ ["-e", script, "--"] ++ Keyword.get(opts, :args, [])
+        run_command("osascript", args, opts, script)
       end
-
-    end_time = System.monotonic_time()
-    duration = System.convert_time_unit(end_time - start_time, :native, :microsecond)
-
-    case result do
-      {:ok, output} ->
-        measurements_with_duration = Map.merge(measurements, %{duration: duration})
-        metadata_with_result = Map.merge(metadata, %{result_type: :success, output_length: String.length(output)})
-        :telemetry.execute([:ex_macos_control, :applescript, :stop], measurements_with_duration, metadata_with_result)
-
-      {:error, error} ->
-        measurements_with_duration = Map.merge(measurements, %{duration: duration})
-        metadata_with_error = Map.merge(metadata, %{error: error, result_type: :error})
-
-        :telemetry.execute(
-          [:ex_macos_control, :applescript, :exception],
-          measurements_with_duration,
-          metadata_with_error
-        )
     end
-
-    result
   end
 
-  # Private function to run command without timeout
-  defp run_without_timeout(cmd, args) do
-    script = extract_script_from_args(args)
+  defp validate_options(opts) do
+    allowed = [:timeout, :args, :language, :output, :trim, :telemetry_script, :max_output_bytes, :stdin]
+
+    cond do
+      not is_list(opts) or not Keyword.keyword?(opts) ->
+        {:error, Error.execution_error("Script options must be a keyword list")}
+
+      Keyword.keys(opts) -- allowed != [] ->
+        {:error, Error.execution_error("Unknown script option")}
+
+      Keyword.get(opts, :output, :text) not in [:text, :source, :json, :execution] ->
+        {:error, Error.execution_error("Output must be :text, :source, :json, or :execution")}
+
+      not valid_boolean_options?(opts) ->
+        {:error, Error.execution_error("trim, telemetry_script, and stdin must be booleans")}
+
+      not is_list(Keyword.get(opts, :args, [])) ->
+        {:error, Error.execution_error("Arguments must be a list of strings")}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp valid_boolean_options?(opts),
+    do:
+      Enum.all?(
+        [:trim, :telemetry_script, :stdin],
+        &is_boolean(Keyword.get(opts, &1, if(&1 == :trim, do: true, else: false)))
+      )
+
+  defp run_command(command, args, opts, source) do
+    opts = ExMacOSControl.execution_options(opts)
 
     metadata = %{
-      command: cmd,
-      script: String.slice(script, 0, 100),
-      timeout: nil
+      command: command,
+      source_id: Base.encode16(:crypto.hash(:sha256, source), case: :lower),
+      timeout: Keyword.get(opts, :timeout)
     }
 
-    measurements = %{
-      script_length: String.length(script)
-    }
-
-    start_time = System.monotonic_time()
+    metadata = if opts[:telemetry_script], do: Map.put(metadata, :script, String.slice(source, 0, 100)), else: metadata
+    measurements = %{script_length: String.length(source)}
+    started = System.monotonic_time(:microsecond)
     :telemetry.execute([:ex_macos_control, :applescript, :start], measurements, metadata)
 
     result =
-      case execute_command(cmd, args) do
-        {output, 0} ->
-          {:ok, String.trim(output)}
+      command
+      |> ExMacOSControl.Command.run(args, Keyword.take(opts, [:timeout, :max_output_bytes, :input]))
+      |> command_result(opts)
 
-        {:error, error} ->
-          {:error, error}
-
-        {stderr, exit_code} ->
-          {:error, Error.parse_osascript_error(stderr, exit_code)}
-      end
-
-    end_time = System.monotonic_time()
-    duration = System.convert_time_unit(end_time - start_time, :native, :microsecond)
-
-    case result do
-      {:ok, output} ->
-        measurements_with_duration = Map.merge(measurements, %{duration: duration})
-        metadata_with_result = Map.merge(metadata, %{result_type: :success, output_length: String.length(output)})
-        :telemetry.execute([:ex_macos_control, :applescript, :stop], measurements_with_duration, metadata_with_result)
-
-      {:error, error} ->
-        measurements_with_duration = Map.merge(measurements, %{duration: duration})
-        metadata_with_error = Map.merge(metadata, %{error: error, result_type: :error})
-
-        :telemetry.execute(
-          [:ex_macos_control, :applescript, :exception],
-          measurements_with_duration,
-          metadata_with_error
-        )
-    end
-
+    duration = System.monotonic_time(:microsecond) - started
+    emit_result(result, Map.put(measurements, :duration, duration), metadata)
     result
   end
+
+  defp command_result({:ok, %{exit_status: 0} = result}, opts) do
+    output = if Keyword.get(opts, :trim, true), do: String.trim(result.stdout), else: result.stdout
+
+    case Keyword.get(opts, :output, :text) do
+      :json ->
+        case Jason.decode(output) do
+          {:ok, value} -> {:ok, value}
+          _ -> {:error, Error.execution_error("Script did not return valid JSON")}
+        end
+
+      :execution ->
+        {:ok, result}
+
+      _ ->
+        {:ok, output}
+    end
+  end
+
+  defp command_result({:ok, result}, _opts) do
+    {:error, Error.parse_osascript_error(result.stderr, result.exit_status)}
+  end
+
+  defp command_result({:error, error}, _opts), do: {:error, error}
+
+  defp emit_result({:ok, output}, measurements, metadata) do
+    metadata = Map.merge(metadata, %{result_type: :success, output_length: output_size(output)})
+    :telemetry.execute([:ex_macos_control, :applescript, :stop], measurements, metadata)
+  end
+
+  defp emit_result({:error, error}, measurements, metadata) do
+    # Application errors can contain private content; publish classification only.
+    metadata = Map.merge(metadata, %{result_type: :error, error: %{type: error.type}})
+    :telemetry.execute([:ex_macos_control, :applescript, :exception], measurements, metadata)
+  end
+
+  defp output_size(output) when is_binary(output), do: byte_size(output)
+  defp output_size(_output), do: 0
 
   @doc """
   Executes a script file from disk with automatic language detection.
@@ -450,7 +408,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   The language is automatically detected from the file extension:
 
-    * `.scpt`, `.applescript` → AppleScript
+    * `.scpt`, `.scptd`, `.applescript` → AppleScript or native compiled language
     * `.js`, `.jxa` → JavaScript
 
   You can override automatic detection using the `:language` option.
@@ -459,7 +417,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   The function validates that:
     * The file exists
-    * The path points to a regular file (not a directory)
+    * The path points to a regular file or a valid script bundle
 
   ## Returns
 
@@ -506,10 +464,11 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   """
   @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
-          {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
+          {:ok, term()} | {:error, ExMacOSControl.Error.t()}
   @impl true
   def run_script_file(file_path, opts) when is_list(opts) do
-    with :ok <- validate_file_exists(file_path),
+    with :ok <- validate_options(opts),
+         :ok <- validate_file_exists(file_path),
          {:ok, language} <- determine_language(file_path, opts) do
       execute_script_file(file_path, language, opts)
     end
@@ -521,7 +480,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
       not File.exists?(file_path) ->
         {:error, Error.not_found("Script file not found", file: file_path)}
 
-      not File.regular?(file_path) ->
+      not File.regular?(file_path) and not script_bundle?(file_path) ->
         {:error, Error.not_found("Path is not a regular file", file: file_path)}
 
       true ->
@@ -529,10 +488,15 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     end
   end
 
+  defp script_bundle?(path) do
+    String.downcase(Path.extname(path)) == ".scptd" and
+      File.regular?(Path.join(path, "Contents/Resources/Scripts/main.scpt"))
+  end
+
   # Detects the language from file extension
   defp detect_language(file_path) do
     case Path.extname(file_path) |> String.downcase() do
-      ext when ext in [".scpt", ".applescript"] -> :applescript
+      ext when ext in [".scpt", ".scptd", ".applescript"] -> :applescript
       ext when ext in [".js", ".jxa"] -> :javascript
       _ -> nil
     end
@@ -565,25 +529,10 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   # Executes the script file using osascript
   defp execute_script_file(file_path, language, opts) do
-    timeout = Keyword.get(opts, :timeout)
-    args = Keyword.get(opts, :args, [])
-
-    # Build command arguments based on language
-    cmd_args = build_command_args(language, file_path, args)
-
-    # Execute with or without timeout
-    run_command("osascript", cmd_args, timeout)
-  end
-
-  # Builds osascript command arguments for the given language
-  defp build_command_args(:applescript, file_path, args) do
-    # osascript file_path [args...]
-    [file_path | args]
-  end
-
-  defp build_command_args(:javascript, file_path, args) do
-    # osascript -l JavaScript file_path [args...]
-    ["-l", "JavaScript", file_path | args]
+    prefix = if language == :javascript, do: ["-l", "JavaScript"], else: []
+    style = if Keyword.get(opts, :output) == :source, do: ["-s", "s"], else: []
+    args = prefix ++ style ++ ["--", Path.expand(file_path)] ++ Keyword.get(opts, :args, [])
+    run_command("osascript", args, opts, Path.basename(file_path))
   end
 
   @doc """
@@ -673,18 +622,24 @@ defmodule ExMacOSControl.OSAScriptAdapter do
           :ok | {:ok, String.t()} | {:error, term()}
   @impl true
   def run_shortcut(name, opts) when is_list(opts) do
+    with :ok <- validate_shortcut_input(name, opts) do
+      execute_shortcut(name, opts)
+    end
+  end
+
+  defp execute_shortcut(name, opts) do
     input = Keyword.get(opts, :input)
 
     script =
-      if input do
+      if is_nil(input) do
+        ~s(tell application "Shortcuts Events" to run shortcut "#{ExMacOSControl.Script.escape_string(name)}")
+      else
         serialized = serialize_shortcut_input(input)
 
         ~s(tell application "Shortcuts Events" to run shortcut "#{ExMacOSControl.Script.escape_string(name)}" with input #{serialized})
-      else
-        ~s(tell application "Shortcuts Events" to run shortcut "#{ExMacOSControl.Script.escape_string(name)}")
       end
 
-    case run_applescript(script, Keyword.take(opts, [:timeout])) do
+    case run_applescript(script, Keyword.delete(opts, :input)) do
       {:ok, ""} -> :ok
       {:ok, output} -> {:ok, output}
       {:error, reason} -> {:error, reason}
@@ -745,5 +700,33 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   defp serialize_shortcut_input(input) when is_map(input) or is_list(input) do
     input |> Jason.encode!() |> serialize_shortcut_input()
+  end
+
+  defp validate_shortcut_input(name, opts) do
+    allowed = [:input, :timeout, :output, :trim, :telemetry_script, :max_output_bytes]
+
+    with :ok <- ExMacOSControl.Automation.required_string(name, "Shortcut name"),
+         :ok <- ExMacOSControl.Automation.options(opts, allowed),
+         :ok <- validate_options(Keyword.delete(opts, :input)) do
+      input = opts[:input]
+
+      cond do
+        is_nil(input) or is_binary(input) or is_number(input) ->
+          :ok
+
+        is_map(input) or is_list(input) ->
+          valid_json_input(input)
+
+        true ->
+          {:error, Error.execution_error("Unsupported Shortcut input type")}
+      end
+    end
+  end
+
+  defp valid_json_input(input) do
+    case Jason.encode(input) do
+      {:ok, _} -> :ok
+      _ -> {:error, Error.execution_error("Shortcut input is not JSON serializable")}
+    end
   end
 end

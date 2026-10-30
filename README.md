@@ -7,13 +7,13 @@
 [![hex.pm license](https://img.shields.io/hexpm/l/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/blob/main/LICENSE)
 [![Last Updated](https://img.shields.io/github/last-commit/houllette/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/commits/master)
 
-A production-ready Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA). Automate Safari, Finder, Mail, Messages, and more—all with the safety and reliability of Elixir.
+An Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA). Automate Safari, Finder, Mail, Messages, and more—all with the safety and reliability of Elixir.
 
 ## Why ExMacOSControl?
 
 - **🎯 Type-Safe Automation**: Leverage Elixir's type system and pattern matching for robust automation
 - **🧪 Test-Friendly**: Built-in adapter pattern with Mox support makes testing automation code straightforward
-- **⚡ Production-Ready**: Automatic retry logic, telemetry integration, and comprehensive error handling
+- **⚡ Execution Controls**: Deadlines, bounded output, telemetry integration, and structured errors
 - **📦 Batteries Included**: Pre-built modules for Safari, Finder, Mail, Messages, and system control
 - **🔒 Permission Management**: Built-in helpers for checking and requesting macOS permissions
 - **🛠️ Extensible**: Clean patterns and guides for adding your own app modules
@@ -41,6 +41,8 @@ case Permissions.check_automation("Safari") do
   {:ok, :not_granted} ->
     Permissions.show_automation_help("Safari")
     raise "Safari automation permission required"
+  {:error, error} ->
+    raise error.message
 end
 
 # Scrape data from a website with automatic retry
@@ -72,22 +74,30 @@ end
 ### Core Features
 - **AppleScript Execution**: Timeout support, argument passing, comprehensive error handling
 - **JavaScript for Automation (JXA)**: Full JXA support with ObjC bridge access
-- **Script File Execution**: Auto-detect `.applescript`, `.scpt`, `.js`, `.jxa` files
-- **macOS Shortcuts**: Run Shortcuts with input parameters (strings, numbers, maps, lists)
+- **Script File Execution**: Text scripts, compiled `.scpt` files and native `.scptd` bundles, plus compile/decompile/validation tools
+- **macOS Shortcuts**: Run/list through the facade; `ExMacOSControl.Shortcuts` adds identifiers, folders, file input/output, output types, and versioned workflow envelopes
 
 ### App Modules
-- **System Events**: Process management, UI automation (menu clicks, keystrokes), file operations
-- **Safari**: Open URLs, execute JavaScript, manage tabs
-- **Finder**: Navigate folders, manage selections, set view modes
-- **Mail**: Send emails (with CC/BCC), search mailboxes, unread counts
-- **Messages**: Send messages using automatic service selection and list chats (unread counts unavailable)
+- **System Events**: Process/window management, bounded accessibility trees, attributes/actions, nested menus, key codes, waits, and Finder integration
+- **Safari**: Address windows/tabs, inspect text/source, execute JavaScript, navigate/wait, and add Reading List entries
+- **Finder**: Window targeting, selections, copy/move/rename, folders, metadata, volumes and view modes
+- **Mail**: Sends/drafts, sender/recipients/attachments, account/mailbox targeting, paged searches, message contents and flags
+- **Messages**: Text/file sends, chat IDs, account/participant discovery, and optional configured Shortcuts search (unread counts unavailable)
+- **Productivity**: Notes, Calendar, Reminders, Contacts, with IDs, paging, validated writes, and timezone-aware dates
+- **Media**: Photos, Music, TV, QuickTime, Image Events, and Final Cut Pro library metadata
+- **Utilities**: Clipboard, dialogs, notifications, speech, volume, Terminal, Automator, System Settings, and property lists
+- **Capability Discovery**: Installed bundle identities, OSA languages, and cached scripting dictionaries with explicit qualification state
+
+New typed helpers use a 30-second deadline; raw execution and legacy calls keep their existing unlimited default. Pass execution options directly or use `ExMacOSControl.with_options/2` to apply a deadline and output limit within the current process. Timeout errors report unknown outcomes for app effects already dispatched, so sends are not automatically retried.
+
+Dictionary discovery reports declared capabilities as unverified. Live account writes, interactive UI workflows and recording require separate qualification in a suitable macOS session.
 
 ### Advanced Features
 - **Permissions**: Check and manage macOS automation permissions
 - **Retry Logic**: Automatic retry with exponential/linear backoff
 - **Telemetry**: Built-in observability via `:telemetry` events
 - **Script DSL**: Optional Elixir DSL for building AppleScript
-- **Platform Detection**: Automatic macOS validation
+- **Platform Detection**: Explicit macOS and executable validation helpers
 
 ## Quick Start
 
@@ -581,7 +591,11 @@ end
 
 # Check automation permission for specific apps
 ExMacOSControl.Permissions.check_automation("Safari")
-# => {:ok, :granted} | {:ok, :not_granted}
+# => {:ok, :granted} | {:ok, :not_granted} | {:error, error}
+
+# Nonprompting preflight keeps a stopped target distinct from a denied grant
+ExMacOSControl.Permissions.preflight_automation("com.apple.Safari")
+# => {:ok, :granted | :denied | :requires_consent | :not_running | :unavailable | :unknown}
 
 # Get overview of all permissions
 statuses = ExMacOSControl.Permissions.check_all()
@@ -624,7 +638,8 @@ end, max_attempts: 3, backoff: :exponential)
 ```
 
 **Retry Behavior:**
-- Only retries timeout errors (errors with `type: :timeout`)
+- Retries timeout errors; native timeouts with unknown effects require `idempotent: true`
+- Never mark sending mail or messages idempotent: an app may have accepted the operation before a timeout
 - Non-timeout errors (syntax, permission, not found) return immediately
 - Exponential backoff: 200ms, 400ms, 800ms, 1600ms, etc.
 - Linear backoff: constant 1000ms between retries
@@ -662,7 +677,7 @@ defmodule MyApp do
     duration_ms = measurements.duration / 1_000
 
     if duration_ms > 5_000 do
-      Logger.warning("Slow operation: #{duration_ms}ms - #{metadata.script}")
+      Logger.warning("Slow operation: #{duration_ms}ms - #{metadata.source_id}")
     end
   end
 

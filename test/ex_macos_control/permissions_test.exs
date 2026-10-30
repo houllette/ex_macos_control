@@ -15,6 +15,7 @@ defmodule ExMacOSControl.PermissionsTest do
 
     stub(ExMacOSControl.AdapterMock, :run_javascript, fn _script -> {:ok, "granted"} end)
 
+    stub(ExMacOSControl.AdapterMock, :run_javascript, fn _script, _opts -> {:ok, ~s({"exmc":1,"result":0})} end)
     :ok
   end
 
@@ -75,92 +76,63 @@ defmodule ExMacOSControl.PermissionsTest do
   end
 
   describe "check_automation/1" do
-    test "returns :granted when permission is granted" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "Safari"
-        assert script =~ "get name"
-        {:ok, "granted"}
+    test "checks wildcard permission without prompting and keeps identity in argv" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn script, opts ->
+        assert script =~ "AEDeterminePermissionToAutomateTarget"
+        assert script =~ "0x2a2a2a2a"
+        refute script =~ "get name"
+        assert %{"identity" => "Safari", "prompt" => false} = opts[:args] |> hd() |> Jason.decode!()
+        {:ok, ~s({"exmc":1,"result":0})}
       end)
 
       assert {:ok, :granted} = Permissions.check_automation("Safari")
     end
 
-    test "returns :not_granted when script returns not_granted" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "Finder"
-        {:ok, "not_granted"}
-      end)
+    test "distinguishes denied, consent required, stopped and unavailable targets" do
+      for {code, status} <- [
+            {-1743, :denied},
+            {-1744, :requires_consent},
+            {-600, :not_running},
+            {-10_814, :unavailable},
+            {-1, :unknown}
+          ] do
+        expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+          {:ok, Jason.encode!(%{exmc: 1, result: code})}
+        end)
 
-      assert {:ok, :not_granted} = Permissions.check_automation("Finder")
+        assert {:ok, ^status} = Permissions.preflight_automation("com.apple.finder")
+      end
     end
 
-    test "escapes quotes in app name" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ ~s(App\\\"Name)
-        {:ok, "granted"}
-      end)
+    test "legacy check maps consent states but does not invent grants for stopped apps" do
+      for code <- [-1743, -1744] do
+        expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+          {:ok, Jason.encode!(%{exmc: 1, result: code})}
+        end)
 
-      Permissions.check_automation(~s(App"Name))
+        assert {:ok, :not_granted} = Permissions.check_automation("App")
+      end
+
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> {:ok, ~s({"exmc":1,"result":-600})} end)
+      assert {:error, %Error{message: message}} = Permissions.check_automation("App")
+      assert message =~ "unknown"
     end
 
-    test "detects 'not allowed' error message" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, %Error{type: :permission_denied, message: "not allowed to send keystrokes"}}
+    test "prompting requires the explicit request method" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+        assert %{"prompt" => true} = opts[:args] |> hd() |> Jason.decode!()
+        {:ok, ~s({"exmc":1,"result":0})}
       end)
 
-      assert {:ok, :not_granted} = Permissions.check_automation("App")
+      assert {:ok, :granted} = Permissions.request_automation("com.apple.finder")
     end
 
-    test "detects 'not authorized' error message" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, %Error{type: :permission_denied, message: "not authorized to control App"}}
-      end)
-
-      assert {:ok, :not_granted} = Permissions.check_automation("App")
-    end
-
-    test "returns error for other failures" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, %Error{type: :execution_error, message: "unknown error"}}
+    test "propagates execution failures" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+        {:error, Error.execution_error("Bridge unavailable")}
       end)
 
       assert {:error, %Error{}} = Permissions.check_automation("App")
-    end
-
-    test "recognizes structured automation permission errors without relying on English text" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, %Error{type: :permission_denied, message: "Zugriff verweigert"}}
-      end)
-
-      assert {:ok, :not_granted} = Permissions.check_automation("Safari")
-    end
-
-    test "generates correct AppleScript for automation check" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "tell application \"Mail\""
-        assert script =~ "get name"
-        assert script =~ "return \"granted\""
-        assert script =~ "not allowed"
-        assert script =~ "not authorized"
-        assert script =~ "on error errMsg number errNum"
-        assert script =~ "error errMsg number errNum"
-        {:ok, "granted"}
-      end)
-
-      Permissions.check_automation("Mail")
-    end
-
-    test "handles different app names correctly" do
-      apps = ["Safari", "Finder", "Mail", "Messages", "Terminal"]
-
-      Enum.each(apps, fn app ->
-        expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-          assert script =~ app
-          {:ok, "granted"}
-        end)
-
-        assert {:ok, :granted} = Permissions.check_automation(app)
-      end)
     end
   end
 
@@ -334,74 +306,26 @@ defmodule ExMacOSControl.PermissionsTest do
   end
 
   describe "check_all/0" do
-    test "checks multiple permissions and returns status map" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn script ->
-        cond do
-          script =~ "Safari" -> {:ok, "not_granted"}
-          script =~ "Finder" -> {:ok, "granted"}
-          script =~ "Mail" -> {:ok, "granted"}
-          script =~ "Messages" -> {:ok, "not_granted"}
-        end
+    test "checks multiple permissions and preserves mixed results" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, 4, fn _, opts ->
+        id = opts[:args] |> hd() |> Jason.decode!() |> Map.fetch!("identity")
+        code = if id in ["Safari", "Messages"], do: -1744, else: 0
+        {:ok, Jason.encode!(%{exmc: 1, result: code})}
       end)
 
-      statuses = Permissions.check_all()
-
-      assert statuses.accessibility == :granted
-      assert statuses.safari_automation == :not_granted
-      assert statuses.finder_automation == :granted
-      assert statuses.mail_automation == :granted
-      assert statuses.messages_automation == :not_granted
+      assert %{
+               accessibility: :granted,
+               safari_automation: :not_granted,
+               finder_automation: :granted,
+               mail_automation: :granted,
+               messages_automation: :not_granted
+             } = Permissions.check_all()
     end
 
-    test "handles errors gracefully" do
-      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
-        {:error, %Error{type: :execution_error, message: "failed"}}
-      end)
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn _script ->
-        {:error, %Error{type: :execution_error, message: "failed"}}
-      end)
-
-      statuses = Permissions.check_all()
-
-      assert statuses.accessibility == :error
-      assert statuses.safari_automation == :error
-      assert statuses.finder_automation == :error
-      assert statuses.mail_automation == :error
-      assert statuses.messages_automation == :error
-    end
-
-    test "returns map with all expected keys" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn _script ->
-        {:ok, "granted"}
-      end)
-
-      statuses = Permissions.check_all()
-
-      assert Map.has_key?(statuses, :accessibility)
-      assert Map.has_key?(statuses, :safari_automation)
-      assert Map.has_key?(statuses, :finder_automation)
-      assert Map.has_key?(statuses, :mail_automation)
-      assert Map.has_key?(statuses, :messages_automation)
-    end
-
-    test "handles mixed permission states" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn script ->
-        cond do
-          script =~ "Safari" -> {:error, %Error{message: "not allowed"}}
-          script =~ "Finder" -> {:ok, "granted"}
-          script =~ "Mail" -> {:ok, "not_granted"}
-          script =~ "Messages" -> {:error, %Error{message: "unknown"}}
-        end
-      end)
-
-      statuses = Permissions.check_all()
-
-      assert statuses.accessibility == :granted
-      assert statuses.safari_automation == :not_granted
-      assert statuses.finder_automation == :granted
-      assert statuses.mail_automation == :not_granted
-      assert statuses.messages_automation == :error
+    test "handles errors without fabricating a permission state" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _ -> {:error, Error.execution_error("failed")} end)
+      expect(ExMacOSControl.AdapterMock, :run_javascript, 4, fn _, _ -> {:error, Error.execution_error("failed")} end)
+      assert Enum.all?(Permissions.check_all(), fn {_, state} -> state == :error end)
     end
   end
 end

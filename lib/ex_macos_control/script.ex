@@ -243,4 +243,63 @@ defmodule ExMacOSControl.Script do
       end
     end)
   end
+
+  @doc "Compiles trusted source to a new script file or script bundle without executing it."
+  def compile(source, destination, opts \\ []) do
+    alias ExMacOSControl.{Automation, Command, Error}
+
+    with :ok <- Automation.options(opts, [:language, :timeout, :max_output_bytes]),
+         :ok <- Automation.required_string(source, "Script source"),
+         :ok <- Automation.required_string(destination, "Compiled destination"),
+         false <- File.exists?(destination),
+         language = Keyword.get(opts, :language, :applescript),
+         true <- language in [:applescript, :javascript] do
+      language = if language == :javascript, do: "JavaScript", else: "AppleScript"
+      args = ["-l", language, "-o", Path.expand(destination), "--", "-"]
+
+      case Command.run(
+             "osacompile",
+             args,
+             Keyword.merge(Keyword.put_new(Automation.execution_options(opts), :timeout, 30_000), input: source)
+           ) do
+        {:ok, %{exit_status: 0}} -> :ok
+        {:ok, result} -> {:error, Error.parse_osascript_error(result.stderr, result.exit_status)}
+        error -> error
+      end
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Destination must be new and language must be :applescript or :javascript")
+    end
+  end
+
+  @doc "Validates script syntax by compiling to a private temporary file, then removing it."
+  def validate(source, opts \\ []) do
+    root = Application.get_env(:ex_macos_control, :temporary_directory, System.tmp_dir!())
+    directory = Path.join(root, "exmc-compile-" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false))
+    File.mkdir_p!(directory)
+    File.chmod!(directory, 0o700)
+
+    try do
+      compile(source, Path.join(directory, "validation.scpt"), opts)
+    after
+      File.rm_rf(directory)
+    end
+  end
+
+  @doc "Returns source from a compiled script using the native decompiler."
+  def decompile(path, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :max_output_bytes]),
+         true <- is_binary(path) and File.exists?(path),
+         {:ok, %{exit_status: 0, stdout: source}} <-
+           ExMacOSControl.Command.run(
+             "osadecompile",
+             ["--", Path.expand(path)],
+             Keyword.put_new(ExMacOSControl.Automation.execution_options(opts), :timeout, 30_000)
+           ) do
+      {:ok, source}
+    else
+      {:error, _} = error -> error
+      _ -> ExMacOSControl.Automation.invalid("Unable to decompile script")
+    end
+  end
 end
