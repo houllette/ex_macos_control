@@ -11,7 +11,7 @@ defmodule ExMacOSControl.Terminal do
   def list_sessions(opts \\ []) do
     Automation.query(
       @app,
-      "var result=[]; app.windows().forEach(function(w){w.tabs().forEach(function(t,i){result.push({window_id:w.id(),tab_index:i+1,title:t.customTitle(),busy:t.busy()});});}); return result;",
+      "var result=[]; app.windows().forEach(function(w){(w.tabs()||[]).forEach(function(t,i){result.push({window_id:w.id(),tab_index:i+1,title:t.customTitle(),busy:t.busy()});});}); return result;",
       %{},
       opts
     )

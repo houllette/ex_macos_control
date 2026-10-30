@@ -96,7 +96,7 @@ defmodule ExMacOSControl.QualificationFixture do
   defp perform(:notes_update, _manifest, context) do
     Process.put(
       {__MODULE__, :note},
-      Map.put(Process.get({__MODULE__, :note}), :plaintext, context.marker <> " changed")
+      Map.put(Process.get({__MODULE__, :note}), :plaintext, context.marker <> "\nchanged")
     )
 
     :ok

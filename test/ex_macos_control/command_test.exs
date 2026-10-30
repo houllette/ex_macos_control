@@ -11,6 +11,18 @@ defmodule ExMacOSControl.CommandTest do
              Command.run("/bin/sh", ["-c", script, "exmc-test", data])
   end
 
+  test "input text file references preserve bytes and are removed after execution" do
+    data = "[\"one\",\"two\"]\n雪"
+    script = ~S(printf '%s\n' "$1"; /bin/cat "$1")
+
+    assert {:ok, %{stdout: output, exit_status: 0}} =
+             Command.run("/bin/sh", ["-c", script, "exmc-test", :input_text_file], input: data)
+
+    assert [path, ^data] = String.split(output, "\n", parts: 2)
+    assert Path.extname(path) == ".txt"
+    refute File.exists?(Path.dirname(path))
+  end
+
   test "terminates the owned command group on timeout" do
     path = Path.expand("tmp/timeout-marker-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm(path) end)
@@ -39,12 +51,20 @@ defmodule ExMacOSControl.CommandTest do
       File.rm(started)
     end)
 
-    script = ~S(printf started > "$1"; /bin/sleep 0.4; printf completed > "$2")
-    caller = spawn(fn -> Command.run("/bin/sh", ["-c", script, "exmc-test", started, marker]) end)
+    script = ~S(printf '%s' "$3" > "$1"; /bin/sleep 0.4; printf completed > "$2")
+
+    caller =
+      spawn(fn ->
+        Command.run("/bin/sh", ["-c", script, "exmc-test", started, marker, :input_text_file], input: "synthetic")
+      end)
+
     assert :ok = ExMacOSControl.Wait.until(fn -> File.exists?(started) end, timeout: 1000, interval: 5)
+    input_path = File.read!(started)
+    assert File.read!(input_path) == "synthetic"
     Process.exit(caller, :kill)
     Process.sleep(500)
     refute File.exists?(marker)
+    refute File.exists?(Path.dirname(input_path))
   end
 
   test "validates data and timeouts before execution" do

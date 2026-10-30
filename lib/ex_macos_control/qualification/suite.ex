@@ -84,7 +84,7 @@ defmodule ExMacOSControl.Qualification.Suite do
   end
 
   defp step(state, {:assert, stage}) do
-    expected = state.marker <> if(stage == :updated, do: " changed", else: "")
+    expected = state.marker <> if(stage == :updated, do: "\nchanged", else: "")
 
     case Session.observe(state, :notes_get) do
       {:ok, %{title: title, plaintext: text, folder_id: folder}} when is_binary(text) ->

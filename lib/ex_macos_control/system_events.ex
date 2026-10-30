@@ -992,10 +992,11 @@ defmodule ExMacOSControl.SystemEvents do
         set attachedScripts to every script whose POSIX path is scriptPath
         if (count of attachedScripts) > 1 then error "Ambiguous attached script"
         if (count of attachedScripts) is 0 then
-          make new script with properties {POSIX path:scriptPath, enabled:desiredEnabled}
+          set attachedScript to make new script with properties {POSIX path:scriptPath}
         else
-          set enabled of item 1 of attachedScripts to desiredEnabled
+          set attachedScript to item 1 of attachedScripts
         end if
+        set enabled of attachedScript to desiredEnabled
       end tell
       """
 
@@ -1048,10 +1049,13 @@ defmodule ExMacOSControl.SystemEvents do
          :ok <- Automation.options(opts, [:enabled, :timeout, :max_output_bytes]) do
       source = """
       on run argv
-        set watchedPath to ((POSIX file (item 1 of argv)) as alias) as text
+        set watchedFolder to (POSIX file (item 1 of argv)) as alias
+        set watchedPath to watchedFolder as text
+        set watchedPOSIXPath to POSIX path of watchedFolder
+        if (length of watchedPOSIXPath) > 1 and watchedPOSIXPath ends with "/" then set watchedPOSIXPath to text 1 thru -2 of watchedPOSIXPath
         set desiredEnabled to (item 3 of argv is "true")
         tell application "System Events"
-          set matches to every folder action whose path is watchedPath
+          set matches to every folder action whose (path is watchedPath or path is watchedPOSIXPath)
           if (count of matches) > 1 then error "Ambiguous folder action"
           #{body}
         end tell

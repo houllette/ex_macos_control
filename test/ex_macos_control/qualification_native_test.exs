@@ -18,6 +18,7 @@ defmodule ExMacOSControl.Qualification.NativeTest do
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
       assert source =~ "byId(app.folders,input.folder).notes"
       assert source =~ "o.name()===input.marker"
+      assert source =~ "o.container().id()===input.folder"
       input = opts[:args] |> hd() |> Jason.decode!()
       assert input["folder"] == "qa-folder"
       assert input["id"] == "unowned"
@@ -26,6 +27,32 @@ defmodule ExMacOSControl.Qualification.NativeTest do
     end)
 
     assert {:error, %Error{}} = Native.perform(:notes_delete, manifest, context, timeout: 1000, max_output_bytes: 1024)
+  end
+
+  test "updates keep the marker on the first line so Notes retains its title" do
+    manifest = QualificationFixture.manifest(Path.expand("tmp/qa"))
+    context = context(manifest)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+      {:ok, ~s({"exmc":1,"result":true})}
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      input = opts[:args] |> hd() |> Jason.decode!()
+      assert input["properties"]["body"] == "<p>#{context.marker}</p><p>changed</p>"
+      {:ok, ~s({"exmc":1,"result":true})}
+    end)
+
+    assert :ok = Native.perform(:notes_update, manifest, context, timeout: 1000, max_output_bytes: 4096)
+  end
+
+  defp context(manifest) do
+    %{
+      id: "note",
+      marker: "EXMC-QA-run",
+      deadline: System.monotonic_time(:millisecond) + 1000,
+      expires_at: manifest["expires_at"]
+    }
   end
 
   test "an effect lease expires again after ownership inspection" do

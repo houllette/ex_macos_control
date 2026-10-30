@@ -116,7 +116,7 @@ defmodule ExMacOSControl.Media do
     with :ok <- Automation.required_string(name, "Playlist name") do
       Automation.query(
         bundle,
-        "var p=app.UserPlaylist({name:input.name}); app.playlists.push(p); return p.persistentID();",
+        "var p=app.make({new:'userPlaylist',withProperties:{name:input.name}}); return p.persistentID();",
         %{name: name},
         opts
       )

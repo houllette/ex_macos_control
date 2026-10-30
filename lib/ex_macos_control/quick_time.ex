@@ -66,9 +66,11 @@ defmodule ExMacOSControl.QuickTime do
     end
   end
 
+  @doc "Creates a recording document. Screen recording opens the macOS capture UI and returns `{:ok, nil}` when no document is created."
   def new_recording(kind, opts \\ []) when kind in [:audio, :movie, :screen] do
     command = %{audio: "newAudioRecording", movie: "newMovieRecording", screen: "newScreenRecording"}[kind]
-    Automation.query(@app, "var o=app.#{command}(); return o.name();", %{}, opts)
+    result = if kind == :screen, do: "return o == null ? null : o.name();", else: "return o.name();"
+    Automation.query(@app, "var o=app.#{command}(); #{result}", %{}, opts)
   end
 
   defp document(target, body, params, opts) do

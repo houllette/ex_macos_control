@@ -139,7 +139,11 @@ defmodule ExMacOSControl.Shortcuts do
 
   defp cli_options(opts) do
     input =
-      if opts[:input_paths] in [nil, []], do: [], else: ["--input-path" | Enum.map(opts[:input_paths], &Path.expand/1)]
+      cond do
+        opts[:input_paths] not in [nil, []] -> ["--input-path" | Enum.map(opts[:input_paths], &Path.expand/1)]
+        not is_nil(opts[:input]) -> ["--input-path", :input_text_file]
+        true -> []
+      end
 
     output = if opts[:output_path], do: ["--output-path", Path.expand(opts[:output_path])], else: []
     type = if opts[:output_type], do: ["--output-type", opts[:output_type]], else: []

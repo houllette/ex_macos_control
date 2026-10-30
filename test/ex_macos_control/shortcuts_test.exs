@@ -10,7 +10,11 @@ defmodule ExMacOSControl.ShortcutsTest do
     File.write!(executable, """
     #!/bin/sh
     printf '%s\\n' "$@" > "$EXMC_TEST_ARGS"
-    /bin/cat > "$EXMC_TEST_INPUT"
+    if [ "$1" = run ] && [ "$2" = --input-path ]; then
+      /bin/cat "$3" > "$EXMC_TEST_INPUT"
+    else
+      /bin/cat > "$EXMC_TEST_INPUT"
+    fi
     if [ -n "$EXMC_TEST_DELAY" ]; then /bin/sleep "$EXMC_TEST_DELAY"; fi
     printf '%s' "$EXMC_TEST_RESPONSE"
     """)
@@ -36,11 +40,17 @@ defmodule ExMacOSControl.ShortcutsTest do
     %{directory: directory}
   end
 
-  test "supports option-like identifiers and sends structured input through stdin", %{directory: directory} do
-    input = %{"text" => "quotes\" 雪\n"}
-    assert {:ok, "result"} = Shortcuts.run("-e", input: input)
-    assert File.read!(Path.join(directory, "args")) == "run\n--\n-e\n"
-    assert Jason.decode!(File.read!(Path.join(directory, "input"))) == input
+  test "preserves structured input as text and keeps option-like identifiers separate", %{directory: directory} do
+    for input <- [%{"text" => "quotes\" 雪\n"}, ["one", "two"]] do
+      assert {:ok, "result"} = Shortcuts.run("-e", input: input)
+
+      assert ["run", "--input-path", path, "--", "-e"] =
+               File.read!(Path.join(directory, "args")) |> String.split("\n", trim: true)
+
+      assert Path.extname(path) == ".txt"
+      assert Jason.decode!(File.read!(Path.join(directory, "input"))) == input
+      refute File.exists?(Path.dirname(path))
+    end
   end
 
   test "passes file input and output types separately without a shell", %{directory: directory} do

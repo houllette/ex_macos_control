@@ -36,6 +36,20 @@ defmodule ExMacOSControl.Calendar do
     }
     return o.calendarIdentifier();
   }
+  function calendarForChange(id) {
+    var values = app.calendars();
+    for (var i = 0; i < values.length; i++) {
+      if (calendarId(values[i]) === id) return app.calendars[i];
+    }
+    throw new Error('Object not found');
+  }
+  function eventForChange(calendar, id) {
+    var values = calendar.events();
+    for (var i = 0; i < values.length; i++) {
+      if (values[i].uid() === id) return calendar.events[i];
+    }
+    throw new Error('Object not found');
+  }
   """
 
   def list_calendars(opts \\ []) do
@@ -66,7 +80,8 @@ defmodule ExMacOSControl.Calendar do
     with :ok <- Automation.required_string(name, "Calendar name") do
       Automation.action(
         @app,
-        "var o=byId(app.calendars,input.id);if(!o.writable())throw new Error('Calendar is read-only');o.name=input.name;",
+        @calendar_identity <>
+          "var o=calendarForChange(input.id);if(!o.writable())throw new Error('Calendar is read-only');o.name=input.name;",
         %{id: id, name: name},
         opts
       )
@@ -76,7 +91,8 @@ defmodule ExMacOSControl.Calendar do
   def delete_calendar(id, opts \\ []) do
     Automation.action(
       @app,
-      "var o=byId(app.calendars,input.id);if(!o.writable())throw new Error('Calendar is read-only');app.delete(o);",
+      @calendar_identity <>
+        "var o=calendarForChange(input.id);if(!o.writable())throw new Error('Calendar is read-only');app.delete(o);",
       %{id: id},
       opts
     )
@@ -106,7 +122,7 @@ defmodule ExMacOSControl.Calendar do
   def get_event(calendar_id, id, opts \\ []) do
     Automation.query(
       @app,
-      "var o = #{@collection}.whose({uid: input.id})()[0]; if (!o) throw new Error('Object not found'); return {id:o.uid(),title:o.summary(),start_at:iso(o.startDate()),end_at:iso(o.endDate()),all_day:o.alldayEvent(),description:o.description(),location:o.location(),recurrence:o.recurrence(),url:o.url()};",
+      "var o = byId(#{@collection}, input.id); return {id:o.uid(),title:o.summary(),start_at:iso(o.startDate()),end_at:iso(o.endDate()),all_day:o.alldayEvent(),description:o.description(),location:o.location(),recurrence:o.recurrence(),url:o.url()};",
       %{calendar_id: calendar_id, id: id},
       opts
     )
@@ -122,7 +138,8 @@ defmodule ExMacOSControl.Calendar do
          {:ok, properties, dates} <- Resources.properties(attrs, @schema) do
       Automation.query(
         @app,
-        "input.dates.forEach(function(key) { input.properties[key] = new Date(input.properties[key]); }); var c=byId(app.calendars,input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only'); var o=app.Event(input.properties); c.events.push(o); return o.uid();",
+        @calendar_identity <>
+          "input.dates.forEach(function(key) { input.properties[key] = new Date(input.properties[key]); }); var c=calendarForChange(input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only'); var o=app.Event(input.properties); c.events.push(o); return o.uid();",
         %{calendar_id: calendar_id, properties: properties, dates: dates},
         opts
       )
@@ -136,14 +153,15 @@ defmodule ExMacOSControl.Calendar do
     with {:ok, properties, dates} <- Resources.properties(attrs, @schema) do
       Automation.action(
         @app,
-        """
-        var c=byId(app.calendars,input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only');
-        var o=c.events.whose({uid:input.id})()[0]; if (!o) throw new Error('Object not found');
-        var start=input.properties.startDate ? new Date(input.properties.startDate) : o.startDate();
-        var end=input.properties.endDate ? new Date(input.properties.endDate) : o.endDate();
-        if (!(end > start)) throw new Error('Event end must follow its start');
-        Object.keys(input.properties).forEach(function(key) { o[key]=input.dates.indexOf(key)>=0 ? new Date(input.properties[key]) : input.properties[key]; });
-        """,
+        @calendar_identity <>
+          """
+          var c=calendarForChange(input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only');
+          var o=eventForChange(c,input.id);
+          var start=input.properties.startDate ? new Date(input.properties.startDate) : o.startDate();
+          var end=input.properties.endDate ? new Date(input.properties.endDate) : o.endDate();
+          if (!(end > start)) throw new Error('Event end must follow its start');
+          Object.keys(input.properties).forEach(function(key) { o[key]=input.dates.indexOf(key)>=0 ? new Date(input.properties[key]) : input.properties[key]; });
+          """,
         %{calendar_id: calendar_id, id: id, properties: properties, dates: dates},
         opts
       )
@@ -153,7 +171,8 @@ defmodule ExMacOSControl.Calendar do
   def delete_event(calendar_id, id, opts \\ []) do
     Automation.action(
       @app,
-      "var c=byId(app.calendars,input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only'); var o=c.events.whose({uid:input.id})()[0]; if (!o) throw new Error('Object not found'); app.delete(o);",
+      @calendar_identity <>
+        "var c=calendarForChange(input.calendar_id); if (!c.writable()) throw new Error('Calendar is read-only'); app.delete(eventForChange(c,input.id)); if(c.events().some(function(e){return e.uid()===input.id;})) throw new Error('Calendar did not delete the event');",
       %{calendar_id: calendar_id, id: id},
       opts
     )
@@ -162,7 +181,7 @@ defmodule ExMacOSControl.Calendar do
   def list_attendees(calendar_id, id, opts \\ []) do
     Automation.query(
       @app,
-      "var o=#{@collection}.whose({uid:input.id})()[0]; if (!o) throw new Error('Object not found'); return o.attendees().map(function(a) { return {name:a.displayName(),email:a.email(),status:a.participationStatus()}; });",
+      "var o=byId(#{@collection},input.id); return o.attendees().map(function(a) { return {name:a.displayName(),email:a.email(),status:a.participationStatus()}; });",
       %{calendar_id: calendar_id, id: id},
       opts
     )
@@ -186,7 +205,8 @@ defmodule ExMacOSControl.Calendar do
          {:ok, properties, dates} <- alarm_properties(type, attrs) do
       Automation.query(
         @app,
-        "var c=byId(app.calendars,input.calendar_id);if(!c.writable())throw new Error('Calendar is read-only');var event=byId(c.events,input.id);input.dates.forEach(function(k){input.properties[k]=new Date(input.properties[k]);});event.#{collection}.push(app.#{constructor}(input.properties));return event.#{collection}.length;",
+        @calendar_identity <>
+          "var c=calendarForChange(input.calendar_id);if(!c.writable())throw new Error('Calendar is read-only');var event=eventForChange(c,input.id);input.dates.forEach(function(k){input.properties[k]=new Date(input.properties[k]);});event.#{collection}.push(app.#{constructor}(input.properties));return event.#{collection}.length;",
         %{calendar_id: calendar_id, id: id, properties: properties, dates: dates},
         opts
       )
@@ -198,7 +218,8 @@ defmodule ExMacOSControl.Calendar do
          true <- is_integer(index) and index > 0 do
       Automation.action(
         @app,
-        "var c=byId(app.calendars,input.calendar_id);if(!c.writable())throw new Error('Calendar is read-only');var alarms=byId(c.events,input.id).#{collection};if(input.index>alarms.length)throw new Error('Alarm not found');app.delete(alarms[input.index-1]);",
+        @calendar_identity <>
+          "var c=calendarForChange(input.calendar_id);if(!c.writable())throw new Error('Calendar is read-only');var alarms=eventForChange(c,input.id).#{collection};if(input.index>alarms.length)throw new Error('Alarm not found');app.delete(alarms[input.index-1]);",
         %{calendar_id: calendar_id, id: id, index: index},
         opts
       )

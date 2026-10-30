@@ -24,7 +24,7 @@ defmodule ExMacOSControl.Accessibility do
           count++;
           var node={role:attr(o,'AXRole'),subrole:attr(o,'AXSubrole'),identifier:attr(o,'AXIdentifier'),
             title:attr(o,'AXTitle'),value:attr(o,'AXValue'),attributes:o.attributes.name(),actions:o.actions.name(),children:[],truncated:false};
-          var children=o.uiElements();
+          var children=o.uiElements;
           if(depth===0){node.truncated=children.length>0;return node;}
           for(var i=0;i<children.length;i++) {
             if(count>=input.max_nodes){node.truncated=true;break;}
@@ -166,27 +166,39 @@ defmodule ExMacOSControl.Accessibility do
   end
 
   defp prelude do
+    # Dereferencing can replace PID predicates with ambiguous process names.
+    # Keep process and child specifiers scoped throughout traversal.
     """
-    var matches=typeof input.process==='number' ? app.processes.whose({unixId:input.process})() : app.processes.whose({name:input.process})();
+    var matches=typeof input.process==='number' ? app.processes.whose({unixId:input.process}) : app.processes.whose({name:input.process});
     if(matches.length!==1) throw new Error('Missing or ambiguous process');
     var p=matches[0];
     function attr(o,name){var a=o.attributes.byName(name); return a.exists()?a.value():null;}
     function resolve(optional){
       var o=p;
       for(var i=0;i<input.path.length;i++){
-        var s=input.path[i], children=o.uiElements().filter(function(c){
-          return (s.role===undefined||attr(c,'AXRole')===s.role) && (s.subrole===undefined||attr(c,'AXSubrole')===s.subrole) &&
-            (s.identifier===undefined||attr(c,'AXIdentifier')===s.identifier) && (s.title===undefined||attr(c,'AXTitle')===s.title);
-        });
+        var s=input.path[i], elements=o.uiElements, children=[];
+        for(var j=0;j<elements.length;j++){
+          var c=elements[j];
+          if((s.role===undefined||attr(c,'AXRole')===s.role) && (s.subrole===undefined||attr(c,'AXSubrole')===s.subrole) &&
+            (s.identifier===undefined||attr(c,'AXIdentifier')===s.identifier) && (s.title===undefined||attr(c,'AXTitle')===s.title))children.push(c);
+        }
         if(s.index!==undefined){o=children[s.index-1]; if(!o){if(optional)return null;throw new Error('Element not found');}}
         else {if(children.length===0&&optional)return null;if(children.length!==1)throw new Error('Missing or ambiguous element');o=children[0];}
       }
       return o;
     }
     function focus(){
-      p.frontmost=true; ObjC.import('Foundation');
-      for(var i=0;i<40&&!p.frontmost();i++) $.NSThread.sleepForTimeInterval(0.025);
-      if(!p.frontmost())throw new Error('Target process did not become frontmost');
+      // System Events can report false even when this PID owns the foreground.
+      ObjC.import('AppKit');
+      var pid=p.unixId(),running=$.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+      if(running.isNil())throw new Error('Target process exited');
+      function active(){
+        var front=$.NSWorkspace.sharedWorkspace.frontmostApplication;
+        return !front.isNil()&&Number(front.processIdentifier)===pid;
+      }
+      if(!active())running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+      for(var i=0;i<40&&!active();i++) $.NSThread.sleepForTimeInterval(0.025);
+      if(!active())throw new Error('Target process did not become frontmost');
     }
     """
   end

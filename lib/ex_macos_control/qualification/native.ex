@@ -34,7 +34,7 @@ defmodule ExMacOSControl.Qualification.Native do
   defp dispatch(:notes_update, manifest, context, opts) do
     with :ok <- owned_note(manifest, context, opts),
          {:ok, effective} <- effect_options(context, opts) do
-      Notes.update_note(context.id, [body: "<p>#{context.marker} changed</p>"], effective)
+      Notes.update_note(context.id, [body: "<p>#{context.marker}</p><p>changed</p>"], effective)
     end
   end
 
@@ -76,7 +76,7 @@ defmodule ExMacOSControl.Qualification.Native do
   def observe(:notes_absent, manifest, context, opts) do
     Automation.query(
       "com.apple.Notes",
-      "return !byId(app.folders,input.folder).notes.byId(input.id).exists();",
+      "return !byId(app.folders,input.folder).notes().some(function(o){return o.id()===input.id;});",
       %{folder: manifest["fixtures"]["notes"]["folder_id"], id: context.id},
       opts
     )
@@ -88,7 +88,7 @@ defmodule ExMacOSControl.Qualification.Native do
   defp owned_note(manifest, context, opts) do
     case Automation.query(
            "com.apple.Notes",
-           "var o=byId(byId(app.folders,input.folder).notes,input.id);return o.name()===input.marker;",
+           "var o=byId(byId(app.folders,input.folder).notes,input.id);return o.name()===input.marker&&o.container().id()===input.folder;",
            %{folder: manifest["fixtures"]["notes"]["folder_id"], id: context.id, marker: context.marker},
            opts
          ) do

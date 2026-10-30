@@ -5,16 +5,20 @@ defmodule ExMacOSControl.Command do
   A timeout terminates the owned process group. An Apple event already delivered
   to another application cannot be recalled; timeout errors mark that outcome as
   unknown. Commands and arguments are never interpolated into shell source.
+
+  An `:input_text_file` argument passes `:input` through an owned `.txt` file,
+  removed when the command finishes or its caller exits.
   """
 
   alias ExMacOSControl.Error
 
   @default_limit 10_485_760
+  @type argument :: String.t() | :input_text_file
   @type result :: %{stdout: binary(), stderr: binary(), exit_status: non_neg_integer()}
   @type option ::
           {:timeout, non_neg_integer() | :infinity | nil} | {:max_output_bytes, pos_integer()} | {:input, binary()}
 
-  @spec run(String.t(), [String.t()], [option()]) :: {:ok, result()} | {:error, Error.t()}
+  @spec run(String.t(), [argument()], [option()]) :: {:ok, result()} | {:error, Error.t()}
   def run(command, args, opts \\ []) do
     owner = self()
 
@@ -50,7 +54,7 @@ defmodule ExMacOSControl.Command do
   defp validate(command, args, opts) do
     cond do
       not valid_command?(command, args) ->
-        invalid("Command and arguments must be strings without NUL bytes")
+        invalid("Command must be a string without NUL bytes; arguments must be strings or :input_text_file")
 
       not valid_options?(opts) ->
         invalid("Command options must be a keyword list")
@@ -69,7 +73,11 @@ defmodule ExMacOSControl.Command do
     end
   end
 
-  defp valid_command?(command, args), do: valid_string?(command) and is_list(args) and Enum.all?(args, &valid_string?/1)
+  defp valid_command?(command, args),
+    do: valid_string?(command) and is_list(args) and Enum.all?(args, &valid_argument?/1)
+
+  defp valid_argument?(:input_text_file), do: true
+  defp valid_argument?(value), do: valid_string?(value)
 
   defp valid_options?(opts),
     do: is_list(opts) and Keyword.keyword?(opts) and Keyword.keys(opts) -- [:timeout, :max_output_bytes, :input] == []
@@ -101,8 +109,9 @@ defmodule ExMacOSControl.Command do
 
   defp execute(executable, args, opts, stderr_path, owner_ref) do
     helper = :ex_macos_control |> :code.priv_dir() |> to_string() |> Path.join("command_runner.sh")
-    input_path = Path.join(Path.dirname(stderr_path), "stdin")
+    input_path = Path.join(Path.dirname(stderr_path), if(:input_text_file in args, do: "input.txt", else: "stdin"))
     File.write!(input_path, Keyword.get(opts, :input, ""))
+    args = Enum.map(args, fn arg -> if arg == :input_text_file, do: input_path, else: arg end)
 
     port =
       Port.open({:spawn_executable, "/bin/bash"}, [
