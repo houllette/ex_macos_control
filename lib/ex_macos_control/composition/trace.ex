@@ -54,7 +54,7 @@ defmodule ExMacOSControl.Composition.Trace do
 
     try do
       result = Context.in_span(metadata.step_id, fn -> Composition.guard(fun) end)
-      outcome = if kind == :verification and result == :ok, do: :confirmed, else: outcome(result)
+      outcome = step_outcome(kind, result)
 
       ending =
         Map.merge(metadata, %{
@@ -78,6 +78,11 @@ defmodule ExMacOSControl.Composition.Trace do
   def outcome({:error, %{details: %{outcome: :unknown}}}), do: :unknown
   def outcome({:error, _}), do: :failed
   def outcome(_), do: :acknowledged
+
+  defp step_outcome(:effect, {:error, %{details: %{outcome: :not_started}}}), do: :not_started
+  defp step_outcome(:effect, {:error, _}), do: :unknown
+  defp step_outcome(:verification, :ok), do: :confirmed
+  defp step_outcome(_kind, result), do: outcome(result)
 
   defp label(value) when is_atom(value), do: Atom.to_string(value)
   defp label(value) when is_integer(value), do: value

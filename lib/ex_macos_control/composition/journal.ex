@@ -8,6 +8,8 @@ defmodule ExMacOSControl.Composition.Journal do
   reconciliation; acknowledgements do not prove external delivery. Run IDs cannot
   be reused. Journals and their ancestor directories must not be symlinks.
   Inspect a run after its owner has stopped; an active run can also have pending intents.
+  A callback error during an effect is uncertain unless it explicitly reports
+  :not_started: a script may have changed an app before reporting an error.
   """
   import Bitwise
   alias ExMacOSControl.Error
