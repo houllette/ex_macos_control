@@ -126,6 +126,21 @@ defmodule ExMacOSControl.Notes do
       else: Automation.invalid("Note text must be a string")
   end
 
+  @doc "Creates an escaped HTML note from an immutable capture. Options include title and folder_id."
+  def create_from(capture, opts \\ []) do
+    with :ok <- Automation.options(opts, [:title, :folder_id, :timeout, :max_output_bytes]) do
+      create_note(
+        [
+          title: Keyword.get(opts, :title, ExMacOSControl.Capture.title(capture)),
+          body: ExMacOSControl.Capture.render(capture, :html)
+        ],
+        Keyword.delete(opts, :title)
+      )
+    end
+  end
+
+  defdelegate capture_note(id, opts \\ []), to: ExMacOSControl.Capture, as: :note
+
   @doc "Creates a note and shows it. A failed show retains the created note ID in error details."
   def create_and_show(attrs, opts \\ []) do
     with :ok <- Automation.options(opts, [:folder_id, :separately, :timeout, :max_output_bytes]),

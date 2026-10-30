@@ -3,6 +3,7 @@ defmodule ExMacOSControl.StandardAdditions do
   alias ExMacOSControl.Automation
 
   def clipboard(opts \\ []), do: query("return String(app.theClipboard());", %{}, opts)
+  defdelegate capture_clipboard(opts \\ []), to: ExMacOSControl.Capture, as: :clipboard
 
   def set_clipboard(text, opts \\ []) when is_binary(text),
     do: action("app.setTheClipboardTo(input.text);", %{text: text}, opts)

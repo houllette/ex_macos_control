@@ -128,6 +128,8 @@ defmodule ExMacOSControl.Calendar do
     )
   end
 
+  defdelegate capture_event(calendar, id, opts \\ []), to: ExMacOSControl.Capture, as: :event
+
   def create_event(calendar_id, attrs, opts \\ []) do
     with :ok <- Automation.options(attrs, Keyword.keys(@schema)),
          :ok <- Automation.required_string(attrs[:title], "Event title"),

@@ -443,6 +443,33 @@ defmodule ExMacOSControl.Mail do
     end
   end
 
+  defdelegate capture_message(account, mailbox, id, opts \\ []), to: ExMacOSControl.Capture, as: :message
+
+  @doc "Creates a draft from captured content. File captures attach their paths; other captures supply text."
+  def create_draft_from(capture, opts) do
+    with :ok <-
+           Automation.options(opts, [
+             :to,
+             :subject,
+             :body,
+             :cc,
+             :bcc,
+             :sender,
+             :from,
+             :attachments,
+             :timeout,
+             :max_output_bytes
+           ]) do
+      opts =
+        opts
+        |> Keyword.put_new(:subject, ExMacOSControl.Capture.title(capture))
+        |> Keyword.put_new(:body, ExMacOSControl.Capture.render(capture, :reference))
+        |> Keyword.put_new(:attachments, ExMacOSControl.Capture.files(capture))
+
+      create_draft(opts)
+    end
+  end
+
   def list_accounts(opts \\ []),
     do: ExMacOSControl.Resources.list("com.apple.mail", "app.accounts", [id: "o.id()", name: "o.name()"], %{}, opts)
 
