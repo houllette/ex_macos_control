@@ -6,7 +6,7 @@ defmodule ExMacOSControl.Accessibility do
   role, subrole, identifier, title and optional 1-based index. Ambiguous selectors
   are rejected. Key delivery first activates and verifies the target process.
   """
-  alias ExMacOSControl.{Automation, Composition, Desktop, Wait}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Validation, Wait}
   @app "com.apple.systemevents"
 
   def tree(process, opts \\ []) do
@@ -171,7 +171,7 @@ defmodule ExMacOSControl.Accessibility do
 
   @doc "Fills a non-empty list of {selector_path, text} pairs in order, stopping on failure."
   def fill_fields(process, fields, opts \\ []) do
-    with :ok <- Composition.validate_items(fields),
+    with :ok <- Validation.items(fields),
          :ok <- validate_fields(fields),
          :ok <- composition_options(opts) do
       Desktop.with_lock(

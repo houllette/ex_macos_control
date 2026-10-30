@@ -7,7 +7,7 @@ defmodule ExMacOSControl.Capture do
   `render/2` supports :plain, :html and :reference. Reference content uses the
   URL and selection for pages; full content falls back to page text.
   """
-  alias ExMacOSControl.{Calendar, Composition, Finder, Mail, Notes, Safari, StandardAdditions}
+  alias ExMacOSControl.{Calendar, Composition, Finder, HTML, Mail, Notes, Safari, StandardAdditions}
   alias ExMacOSControl.Capture.{Event, Files, Message, Page, Text}
 
   def page(target, opts \\ []) do
@@ -88,7 +88,7 @@ defmodule ExMacOSControl.Capture do
   def title(%Files{paths: paths}), do: "#{length(paths)} selected files"
 
   def render(capture, format \\ :plain)
-  def render(capture, :html), do: "<p>" <> Composition.html(render(capture, :plain)) <> "</p>"
+  def render(capture, :html), do: "<p>" <> HTML.escape(render(capture, :plain)) <> "</p>"
   def render(%Page{} = page, :plain), do: page.url <> "\n\n" <> nonempty(page.selection, page.text)
   def render(%Page{} = page, :reference), do: page.url <> "\n\n" <> page.selection
   def render(%Text{text: text}, :plain), do: text

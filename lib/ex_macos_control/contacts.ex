@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Contacts do
   @moduledoc "Contacts and groups addressed by ID. Changes are explicitly saved through Contacts."
-  alias ExMacOSControl.{Automation, Composition, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources, Validation}
   @app "com.apple.AddressBook"
   @fields [
     id: "o.id()",
@@ -127,7 +127,7 @@ defmodule ExMacOSControl.Contacts do
   def create_with_details(attrs, details, opts \\ []) do
     with :ok <- Automation.options(details, [:emails, :phones, :addresses, :group_ids]),
          {:ok, actions} <- detail_actions(details),
-         :ok <- Composition.validate_all(actions, &validate_detail/1) do
+         :ok <- Validation.all(actions, &validate_detail/1) do
       Composition.run(
         fn -> do_create_with_details(attrs, actions) end,
         opts

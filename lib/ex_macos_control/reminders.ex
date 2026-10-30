@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Reminders do
   @moduledoc "Accounts, lists and reminders with explicit list IDs, dates, priorities and completion state."
-  alias ExMacOSControl.{Automation, Composition, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources, Validation}
   @app "com.apple.reminders"
   @fields [
     id: "o.id()",
@@ -95,16 +95,16 @@ defmodule ExMacOSControl.Reminders do
   @doc "Creates a validated batch in order. Errors retain IDs created before a later failure."
   def create_many(list_id, items, opts \\ []) do
     with :ok <- Automation.required_string(list_id, "List ID"),
-         :ok <- Composition.validate_items(items),
-         :ok <- Composition.validate_all(items, &validate_reminder/1) do
+         :ok <- Validation.items(items),
+         :ok <- Validation.all(items, &validate_reminder/1) do
       Composition.run(fn -> Composition.map(items, :create_reminder, &create_reminder(list_id, &1)) end, opts)
     end
   end
 
   @doc "Completes a batch of explicit reminder IDs without retrying mutations."
   def complete_many(ids, opts \\ []) do
-    with :ok <- Composition.validate_items(ids),
-         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Reminder ID")) do
+    with :ok <- Validation.items(ids),
+         :ok <- Validation.all(ids, &Automation.required_string(&1, "Reminder ID")) do
       Composition.run(
         fn -> do_complete_many(ids) end,
         opts

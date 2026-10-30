@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Safari.Compositions do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Desktop, Error, Safari, Wait}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Error, Safari, Validation, Wait}
   alias ExMacOSControl.Safari.Page
 
   @execution [:timeout, :max_output_bytes]
@@ -151,7 +151,7 @@ defmodule ExMacOSControl.Safari.Compositions do
   end
 
   def fill_fields(%Page{} = page, fields, opts \\ []) do
-    with :ok <- Composition.validate_items(fields),
+    with :ok <- Validation.items(fields),
          true <-
            Enum.all?(fields, fn item ->
              match?({selector, value} when is_binary(selector) and is_binary(value), item)

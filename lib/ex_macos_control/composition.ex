@@ -238,32 +238,11 @@ defmodule ExMacOSControl.Composition do
   end
 
   @doc false
-  def validate_items(items) do
-    if is_list(items) and items != [] and length(items) <= 1000,
-      do: :ok,
-      else: Automation.invalid("Items must be a non-empty list of at most 1000 entries")
-  end
-
+  defdelegate validate_items(items), to: ExMacOSControl.Validation, as: :items
   @doc false
-  def validate_all(items, validator) do
-    Enum.reduce_while(items, :ok, fn item, :ok ->
-      case validator.(item) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-  end
-
+  defdelegate validate_all(items, validator), to: ExMacOSControl.Validation, as: :all
   @doc false
-  def html(text) do
-    text
-    |> String.replace("&", "&amp;")
-    |> String.replace("<", "&lt;")
-    |> String.replace(">", "&gt;")
-    |> String.replace("\"", "&quot;")
-    |> String.replace("'", "&#39;")
-    |> String.replace("\n", "<br>")
-  end
+  defdelegate html(text), to: ExMacOSControl.HTML, as: :escape
 
   defp cap_timeout(value, remaining) when is_integer(value), do: min(value, remaining)
   defp cap_timeout(value, remaining) when value in [nil, :infinity], do: remaining

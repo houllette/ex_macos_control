@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Media do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources, Validation}
 
   defmacro __using__(opts) do
     bundle = Keyword.fetch!(opts, :bundle_id)
@@ -129,8 +129,8 @@ defmodule ExMacOSControl.Media do
 
   def create_playlist_with_tracks(bundle, name, ids, opts) do
     with :ok <- Automation.required_string(name, "Playlist name"),
-         :ok <- Composition.validate_items(ids),
-         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Track ID")) do
+         :ok <- Validation.items(ids),
+         :ok <- Validation.all(ids, &Automation.required_string(&1, "Track ID")) do
       Composition.run(
         fn -> do_create_playlist_with_tracks(bundle, name, ids) end,
         opts
