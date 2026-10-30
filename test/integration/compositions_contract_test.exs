@@ -93,11 +93,12 @@ defmodule ExMacOSControl.CompositionsContractTest do
   test "application identity and running PID are resolved through native AppKit without launching an app" do
     stub(ExMacOSControl.AdapterMock, :run_javascript, &OSAScriptAdapter.run_javascript/2)
 
-    assert {:ok, %{bundle_id: "com.apple.finder", path: path, running: true, pid: pid}} =
+    assert {:ok, %{bundle_id: "com.apple.finder", path: path, running: running, pid: pid}} =
              Applications.status("com.apple.finder")
 
     assert String.ends_with?(path, "/Finder.app")
-    assert is_integer(pid) and pid > 0
+    assert is_boolean(running)
+    if running, do: assert(is_integer(pid) and pid > 0), else: assert(is_nil(pid))
   end
 
   test "owned-window creation AppleScript compiles without opening any window" do

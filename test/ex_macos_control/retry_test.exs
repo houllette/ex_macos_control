@@ -5,7 +5,9 @@ defmodule ExMacOSControl.RetryTest do
 
   # Telemetry handler module to avoid performance warnings
   def handle_telemetry_event(event, measurements, metadata, config) do
-    send(config.test_pid, {:telemetry, event, measurements, metadata})
+    if self() == config.test_pid do
+      send(config.test_pid, {:telemetry, event, measurements, metadata})
+    end
   end
 
   test "accepts action acknowledgements and refuses unknown outcomes unless explicitly idempotent" do
@@ -286,6 +288,17 @@ defmodule ExMacOSControl.RetryTest do
       Retry.with_retry(fn -> {:ok, "success"} end, max_attempts: 3, backoff: :exponential)
 
       assert_received {:telemetry, [:ex_macos_control, :retry, :start], %{}, %{max_attempts: 3, backoff: :exponential}}
+    end
+
+    test "ignores telemetry emitted by concurrent retry callers" do
+      Task.async(fn -> Retry.with_retry(fn -> {:error, %{type: :timeout}} end, max_attempts: 1) end)
+      |> Task.await()
+
+      refute_received {:telemetry, _, _, _}
+
+      assert :ok = Retry.with_retry(fn -> :ok end)
+      assert_received {:telemetry, [:ex_macos_control, :retry, :stop], _, _}
+      refute_received {:telemetry, [:ex_macos_control, :retry, :error], _, _}
     end
 
     test "emits attempt events for each retry" do
