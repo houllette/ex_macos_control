@@ -64,7 +64,8 @@ defmodule ExMacOSControl.OSAScriptAdapterCommandTest do
       fn -> OSAScriptAdapter.run_applescript("delay 2", timeout: 25) end,
       fn -> OSAScriptAdapter.run_javascript("1 + 1", timeout: 25) end,
       fn -> OSAScriptAdapter.run_script_file(script, timeout: 25) end,
-      fn -> OSAScriptAdapter.run_shortcut("Fixture", timeout: 25) end
+      fn -> OSAScriptAdapter.run_shortcut("Fixture", timeout: 25) end,
+      fn -> ExMacOSControl.with_options([timeout: 25], &OSAScriptAdapter.list_shortcuts/0) end
     ]
 
     Enum.each(calls, fn call ->
@@ -139,6 +140,32 @@ defmodule ExMacOSControl.OSAScriptAdapterCommandTest do
 
     System.put_env("EX_MACOS_CONTROL_COMMAND_OUTPUT", "one,two")
     assert {:error, %Error{type: :execution_error}} = OSAScriptAdapter.list_shortcuts()
+  end
+
+  test "Shortcut listing has a finite default deadline and respects scoped overrides" do
+    handler = {__MODULE__, self()}
+
+    :ok =
+      :telemetry.attach(
+        handler,
+        [:ex_macos_control, :applescript, :start],
+        fn _, _, metadata, pid ->
+          send(pid, {:listing_deadline, metadata.timeout})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+    System.put_env("EX_MACOS_CONTROL_COMMAND_MODE", "structured")
+    System.put_env("EX_MACOS_CONTROL_COMMAND_OUTPUT", "EXMC1\nEND")
+
+    assert {:ok, []} = OSAScriptAdapter.list_shortcuts()
+    assert_receive {:listing_deadline, 30_000}
+
+    for timeout <- [1000, nil, :infinity] do
+      assert {:ok, []} = ExMacOSControl.with_options([timeout: timeout], &OSAScriptAdapter.list_shortcuts/0)
+      assert_receive {:listing_deadline, ^timeout}
+    end
   end
 
   test "escapes shortcut names and string input", %{args_file: file} do

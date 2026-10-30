@@ -1,7 +1,7 @@
 defmodule ExMacOSControl.SystemEventsIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias ExMacOSControl.{SystemEvents, TestHelpers}
+  alias ExMacOSControl.{DesktopSession, SystemEvents, TestHelpers}
 
   # These tests require macOS with osascript
   @moduletag :integration
@@ -25,7 +25,7 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
       Application.put_env(:ex_macos_control, :adapter, original_adapter)
     end)
 
-    :ok
+    DesktopSession.start()
   end
 
   describe "list_processes/0" do
@@ -438,9 +438,10 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
   end
 
   describe "reveal_in_finder/1 (integration)" do
-    setup do
+    setup %{desktop_directory: directory} do
       # Create a temporary file for testing
-      tmp_dir = System.tmp_dir!()
+      tmp_dir = Path.join(directory, "folder")
+      File.mkdir!(tmp_dir)
       tmp_file = Path.join(tmp_dir, "test_reveal_#{System.unique_integer([:positive])}.txt")
       File.write!(tmp_file, "test content")
 
@@ -568,9 +569,9 @@ defmodule ExMacOSControl.SystemEventsIntegrationTest do
   end
 
   describe "file operations workflow (integration)" do
-    setup do
+    setup %{desktop_directory: directory} do
       # Create a temporary file for the workflow
-      tmp_file = Path.join(System.tmp_dir!(), "test_workflow_#{System.unique_integer([:positive])}.txt")
+      tmp_file = Path.join(directory, "test_workflow_#{System.unique_integer([:positive])}.txt")
       File.write!(tmp_file, "test content for workflow")
 
       %{tmp_file: tmp_file}

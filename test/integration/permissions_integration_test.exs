@@ -49,32 +49,23 @@ defmodule ExMacOSControl.PermissionsIntegrationTest do
   end
 
   describe "check_automation/1" do
-    @tag :integration
-    test "checks Safari automation permission" do
-      result = Permissions.check_automation("Safari")
-      assert {:ok, status} = result
-      assert status in [:granted, :not_granted]
-    end
+    for {name, bundle} <- [
+          {"Safari", "com.apple.Safari"},
+          {"Finder", "com.apple.finder"},
+          {"Mail", "com.apple.mail"},
+          {"Messages", "com.apple.MobileSMS"}
+        ] do
+      test "resolves #{name} by name and bundle ID without launching it" do
+        assert {:ok, status} = Permissions.preflight_automation(unquote(name), timeout: 5000)
+        assert status in [:granted, :denied, :requires_consent, :not_running]
+        assert {:ok, ^status} = Permissions.preflight_automation(unquote(bundle), timeout: 5000)
 
-    @tag :integration
-    test "checks Finder automation permission" do
-      result = Permissions.check_automation("Finder")
-      assert {:ok, status} = result
-      assert status in [:granted, :not_granted]
-    end
-
-    @tag :integration
-    test "checks Mail automation permission" do
-      result = Permissions.check_automation("Mail")
-      assert {:ok, status} = result
-      assert status in [:granted, :not_granted]
-    end
-
-    @tag :integration
-    test "checks Messages automation permission" do
-      result = Permissions.check_automation("Messages")
-      assert {:ok, status} = result
-      assert status in [:granted, :not_granted]
+        case status do
+          :granted -> assert {:ok, :granted} = Permissions.check_automation(unquote(name))
+          :not_running -> assert {:error, %{type: :execution_error}} = Permissions.check_automation(unquote(name))
+          _ -> assert {:ok, :not_granted} = Permissions.check_automation(unquote(name))
+        end
+      end
     end
   end
 

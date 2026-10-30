@@ -54,6 +54,8 @@ defmodule ExMacOSControl.Qualification.ManifestTest do
           {"uid", 0},
           {"groups", ["staff", "admin"]},
           {"console_uid", 503},
+          {"session", "Background"},
+          {"session", nil},
           {"workspace", "/tmp"},
           {"username", "personal"},
           {"machine_sha256", "other"}

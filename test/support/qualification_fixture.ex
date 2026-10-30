@@ -49,6 +49,7 @@ defmodule ExMacOSControl.QualificationFixture do
       |> Map.merge(%{
         "console_uid" => 502,
         "groups" => ["staff"],
+        "session" => "Aqua",
         "workspace" => manifest["workspace"],
         "macos" => "test",
         "elixir" => System.version()

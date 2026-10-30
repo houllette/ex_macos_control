@@ -25,21 +25,37 @@ defmodule ExMacOSControl.Calendar do
     sound_file: {"soundFile", :string}
   ]
 
-  def list_calendars(opts \\ []),
-    do:
-      Resources.list(
+  # Some Calendar versions expose the ID only in the returned object specifier.
+  # Parse the final JSON string literal without evaluating generated source.
+  @calendar_identity ~S"""
+  function calendarId(o) {
+    var match = /\.byId\(("(?:[^"\\]|\\.)*")\)$/.exec(Automation.getDisplayString(o));
+    if (match) {
+      var id = JSON.parse(match[1]);
+      if (typeof id === 'string' && id) return id;
+    }
+    return o.calendarIdentifier();
+  }
+  """
+
+  def list_calendars(opts \\ []) do
+    with :ok <- Automation.options(opts, [:limit, :offset, :timeout, :max_output_bytes]),
+         {:ok, paging} <- Automation.page(opts) do
+      Automation.query(
         @app,
-        "app.calendars",
-        [id: "o.calendarIdentifier()", name: "o.name()", writable: "o.writable()"],
-        %{},
-        opts
+        @calendar_identity <>
+          "return page(app.calendars()).map(function(o){return {id:calendarId(o),name:o.name(),writable:o.writable()};});",
+        paging,
+        Automation.execution_options(opts)
       )
+    end
+  end
 
   def create_calendar(name, opts \\ []) do
     with :ok <- Automation.required_string(name, "Calendar name") do
       Automation.query(
         @app,
-        "var o=app.Calendar({name:input.name});app.calendars.push(o);return o.calendarIdentifier();",
+        @calendar_identity <> "var o=app.Calendar({name:input.name});app.calendars.push(o);return calendarId(o);",
         %{name: name},
         opts
       )

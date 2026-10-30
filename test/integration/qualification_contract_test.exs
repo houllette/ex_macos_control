@@ -11,6 +11,7 @@ defmodule ExMacOSControl.QualificationContractTest do
     assert is_integer(snapshot["uid"])
     assert is_integer(snapshot["console_uid"])
     assert is_list(snapshot["groups"])
+    assert is_binary(snapshot["session"])
     assert byte_size(snapshot["machine_sha256"]) == 64
     assert snapshot["workspace"] == File.cwd!()
   end

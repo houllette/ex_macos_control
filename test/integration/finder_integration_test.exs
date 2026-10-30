@@ -11,14 +11,14 @@ defmodule ExMacOSControl.FinderIntegrationTest do
     @moduletag skip: "Requires --include desktop (use an isolated macOS session)"
   end
 
-  alias ExMacOSControl.Finder
+  alias ExMacOSControl.{DesktopSession, Finder}
 
   setup :verify_on_exit!
 
   # Stub the mock adapter to use the real OSAScriptAdapter for integration tests
   setup do
     Mox.stub_with(ExMacOSControl.AdapterMock, ExMacOSControl.OSAScriptAdapter)
-    :ok
+    DesktopSession.start(finder: true)
   end
 
   describe "get_selection/0" do
@@ -35,8 +35,8 @@ defmodule ExMacOSControl.FinderIntegrationTest do
   end
 
   describe "open_location/1" do
-    test "opens valid location" do
-      assert :ok = Finder.open_location("/Users")
+    test "opens valid location", %{desktop_directory: directory} do
+      assert :ok = Finder.open_location(directory)
       Process.sleep(500)
     end
 
@@ -47,8 +47,8 @@ defmodule ExMacOSControl.FinderIntegrationTest do
   end
 
   describe "new_window/1" do
-    test "creates new window at location" do
-      assert :ok = Finder.new_window("/Applications")
+    test "creates new window at location", %{desktop_directory: directory} do
+      assert :ok = Finder.new_window(directory)
       Process.sleep(500)
     end
 
@@ -59,9 +59,9 @@ defmodule ExMacOSControl.FinderIntegrationTest do
   end
 
   describe "get_current_folder/0" do
-    setup do
+    setup %{desktop_directory: directory} do
       # Open a known location to ensure we have a window
-      Finder.open_location("/Users")
+      Finder.open_location(directory)
       Process.sleep(500)
       :ok
     end
@@ -78,9 +78,9 @@ defmodule ExMacOSControl.FinderIntegrationTest do
   end
 
   describe "set_view/1" do
-    setup do
+    setup %{desktop_directory: directory} do
       # Ensure we have a Finder window
-      Finder.open_location("/Applications")
+      Finder.open_location(directory)
       Process.sleep(500)
       :ok
     end

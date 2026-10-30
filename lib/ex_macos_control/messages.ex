@@ -438,15 +438,24 @@ defmodule ExMacOSControl.Messages do
     end
   end
 
-  def list_accounts(opts \\ []),
-    do:
-      ExMacOSControl.Resources.list(
+  @doc "Lists accounts. service_type is nil when an account does not implement that property."
+  def list_accounts(opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:limit, :offset, :timeout, :max_output_bytes]),
+         {:ok, paging} <- ExMacOSControl.Automation.page(opts) do
+      ExMacOSControl.Automation.query(
         "com.apple.MobileSMS",
-        "app.accounts",
-        [id: "o.id()", name: "o.description()", enabled: "o.enabled()", service_type: "o.serviceType()"],
-        %{},
-        opts
+        """
+        function serviceType(o) {
+          try { return o.serviceType(); }
+          catch (error) { if(error.errorNumber === -10000) return null; throw error; }
+        }
+        return page(app.accounts()).map(function(o){return {id:o.id(),name:o.description(),enabled:o.enabled(),service_type:serviceType(o)};});
+        """,
+        paging,
+        ExMacOSControl.Automation.execution_options(opts)
       )
+    end
+  end
 
   def list_participants(opts \\ []),
     do:

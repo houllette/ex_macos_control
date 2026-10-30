@@ -10,6 +10,10 @@ defmodule ExMacOSControl.UnicodeSelectionIntegrationTest do
     @moduletag skip: "Requires --include desktop (creates and closes its own Finder window)"
   end
 
+  setup do
+    ExMacOSControl.DesktopSession.start()
+  end
+
   test "selection preserves distinct fullwidth and ASCII backslash filenames" do
     original_adapter = Application.get_env(:ex_macos_control, :adapter)
     Application.put_env(:ex_macos_control, :adapter, OSAScriptAdapter)

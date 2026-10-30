@@ -7,6 +7,7 @@ defmodule ExMacOSControl.Qualification.Host do
          {:ok, uid} <- command("/usr/bin/id", ["-u"]),
          {:ok, username} <- command("/usr/bin/id", ["-un"]),
          {:ok, groups} <- command("/usr/bin/id", ["-Gn"]),
+         {:ok, session} <- command("/bin/launchctl", ["managername"]),
          {:ok, machine} <- command("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"]),
          [_, uuid] <- Regex.run(~r/"IOPlatformUUID"\s*=\s*"([^"]+)"/, machine),
          {:ok, %{uid: console_uid}} <- File.stat("/dev/console"),
@@ -16,6 +17,7 @@ defmodule ExMacOSControl.Qualification.Host do
          "uid" => String.to_integer(uid),
          "username" => username,
          "groups" => String.split(groups),
+         "session" => session,
          "console_uid" => console_uid,
          "home" => System.user_home!(),
          "machine_sha256" => Base.encode16(:crypto.hash(:sha256, uuid), case: :lower),
@@ -33,7 +35,8 @@ defmodule ExMacOSControl.Qualification.Host do
     host = Map.delete(manifest["host"], "disposable")
     matches = Enum.all?(host, fn {key, value} -> snapshot[key] == value end)
 
-    if matches and standard_user?(snapshot) and snapshot["uid"] == snapshot["console_uid"] and
+    if matches and standard_user?(snapshot) and snapshot["session"] == "Aqua" and
+         snapshot["uid"] == snapshot["console_uid"] and
          snapshot["workspace"] == manifest["workspace"],
        do: :ok,
        else: Automation.invalid("User, machine, workspace, or active desktop differs from the manifest")

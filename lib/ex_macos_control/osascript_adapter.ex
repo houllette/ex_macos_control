@@ -650,6 +650,8 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   Lists all available macOS Shortcuts.
 
   Uses AppleScript to query the Shortcuts app for all shortcuts.
+  Defaults to a 30-second deadline. Use `ExMacOSControl.with_options/2` to
+  override the deadline or output limit.
 
   ## Returns
 
@@ -680,7 +682,9 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     #{ScriptOutput.handlers()}
     """
 
-    case run_applescript(script) do
+    opts = [] |> ExMacOSControl.execution_options() |> Keyword.put_new(:timeout, 30_000)
+
+    case run_applescript(script, opts) do
       {:ok, output} ->
         with {:ok, rows} <- ScriptOutput.decode(output, 1) do
           {:ok, List.flatten(rows)}

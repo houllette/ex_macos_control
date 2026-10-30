@@ -127,7 +127,7 @@ defmodule ExMacOSControl.WrapperContractTest do
       fn -> StandardAdditions.say("text", rate: 100) end,
       fn -> StandardAdditions.set_volume(10) end,
       fn -> StandardAdditions.path_to(:downloads) end,
-      fn -> Terminal.do_script("printf test", new_tab: true) end,
+      fn -> Terminal.do_script("printf test", window_id: 1, tab_index: 1) end,
       fn -> Terminal.read_session(1, 1) end,
       fn -> SystemSettings.list_anchors("pane") end,
       fn -> SystemSettings.reveal("pane", anchor: "anchor") end,

@@ -1,7 +1,7 @@
 defmodule ExMacOSControl.SafariIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias ExMacOSControl.{Safari, SystemEvents, TestHelpers}
+  alias ExMacOSControl.{DesktopSession, Safari, TestHelpers}
 
   # These tests require macOS with osascript and Safari
   @moduletag :integration
@@ -25,11 +25,7 @@ defmodule ExMacOSControl.SafariIntegrationTest do
       Application.put_env(:ex_macos_control, :adapter, original_adapter)
     end)
 
-    # Launch Safari if not running
-    SystemEvents.launch_application("Safari")
-    Process.sleep(1000)
-
-    :ok
+    DesktopSession.start(safari: true)
   end
 
   describe "open_url/1" do

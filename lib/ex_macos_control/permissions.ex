@@ -437,12 +437,14 @@ defmodule ExMacOSControl.Permissions do
              ObjC.bindFunction('AEDeterminePermissionToAutomateTarget',['int',['void *','unsigned int','unsigned int','bool']]);
              var workspace=$.NSWorkspace.sharedWorkspace;
              var url=workspace.URLForApplicationWithBundleIdentifier($(input.identity));
-             var path=url ? url.path : workspace.fullPathForApplication($(input.identity));
-             if(!path && /\\.app$/.test(input.identity)) path=$(input.identity);
+             var path=url.isNil() ? ObjC.unwrap(workspace.fullPathForApplication($(input.identity))) : ObjC.unwrap(url.path);
+             if(!path && /\\.app$/.test(input.identity)) path=input.identity;
              if(!path) return -10814;
-             var bundle=$.NSBundle.bundleWithPath(path), identifier=bundle.bundleIdentifier;
+             var bundle=$.NSBundle.bundleWithPath($(path));
+             if(bundle.isNil()) return -10814;
+             var identifier=ObjC.unwrap(bundle.bundleIdentifier);
              if(!identifier) return -10814;
-             var target=$.NSAppleEventDescriptor.descriptorWithBundleIdentifier(identifier);
+             var target=$.NSAppleEventDescriptor.descriptorWithBundleIdentifier($(identifier));
              return $.AEDeterminePermissionToAutomateTarget(target.aeDesc,0x2a2a2a2a,0x2a2a2a2a,input.prompt);
              """,
              %{identity: identity, prompt: prompt},
