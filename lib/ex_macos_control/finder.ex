@@ -423,6 +423,17 @@ defmodule ExMacOSControl.Finder do
   def new_window(path, opts), do: ExMacOSControl.with_options(opts, fn -> new_window(path) end)
   def set_view(view, opts), do: ExMacOSControl.with_options(opts, fn -> set_view(view) end)
 
+  @doc "Captures a non-empty selection once and passes it to a tagged-result callback under a shared deadline."
+  defdelegate with_selection(fun, opts \\ []), to: ExMacOSControl.Finder.Compositions
+  @doc "Maps the captured selection sequentially, reporting completed results on failure."
+  defdelegate map_selection(fun, opts \\ []), to: ExMacOSControl.Finder.Compositions
+  defdelegate copy_selection(destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
+  defdelegate move_selection(destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
+  @doc "Copies a batch after checking every destination for collisions; returns resulting paths."
+  defdelegate copy_files(paths, destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
+  @doc "Moves a batch once, stopping on the first failure; completed paths are available in error details."
+  defdelegate move_files(paths, destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
+
   defp transfer(command, path, destination, opts) do
     if is_binary(path) and is_binary(destination) and File.exists?(path) and File.dir?(destination) and
          not File.exists?(Path.join(destination, Path.basename(path))) do

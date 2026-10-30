@@ -40,4 +40,19 @@ defmodule ExMacOSControl.TerminalTest do
 
     assert :ok = Terminal.do_script(command, window_id: 42, tab_index: 2, timeout: 1234)
   end
+
+  test "idle waits only observe a targeted session and never redispatch commands" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, _ ->
+      refute source =~ "doScript"
+      {:ok, ~s({"exmc":1,"result":{"busy":true}})}
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> {:ok, ~s({"exmc":1,"result":{"busy":false}})} end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+      {:ok, ~s({"exmc":1,"result":{"busy":false,"text":"finished"}})}
+    end)
+
+    assert {:ok, %{busy: false, text: "finished"}} = Terminal.wait_until_idle(42, 2, interval: 1)
+  end
 end

@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Contacts do
   @moduledoc "Contacts and groups addressed by ID. Changes are explicitly saved through Contacts."
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
   @app "com.apple.AddressBook"
   @fields [
     id: "o.id()",
@@ -118,6 +118,48 @@ defmodule ExMacOSControl.Contacts do
   def add_email(id, value, label \\ "work", opts \\ []), do: add_value(id, value, label, "Email", "emails", opts)
   def add_phone(id, value, label \\ "work", opts \\ []), do: add_value(id, value, label, "Phone", "phones", opts)
 
+  @doc """
+  Creates a contact, then adds emails, phones, addresses and group memberships.
+  Details are a keyword list: emails/phones are `{value, label}` pairs,
+  addresses are address keyword lists, and group_ids are explicit IDs.
+  A failure preserves the new contact ID and completed detail steps.
+  """
+  def create_with_details(attrs, details, opts \\ []) do
+    with :ok <- Automation.options(details, [:emails, :phones, :addresses, :group_ids]),
+         {:ok, actions} <- detail_actions(details),
+         :ok <- Composition.validate_all(actions, &validate_detail/1) do
+      Composition.run(
+        fn -> do_create_with_details(attrs, actions) end,
+        opts
+      )
+    end
+  end
+
+  defp detail_actions(details) do
+    values = Enum.map([:emails, :phones, :addresses, :group_ids], &{&1, Keyword.get(details, &1, [])})
+
+    if Enum.all?(values, fn {_, items} -> is_list(items) and length(items) <= 1000 end),
+      do: {:ok, Enum.flat_map(values, fn {kind, items} -> Enum.map(items, &{kind, &1}) end)},
+      else: Automation.invalid("Contact details must be lists of at most 1000 entries")
+  end
+
+  defp validate_detail({kind, {value, label}}) when kind in [:emails, :phones] do
+    with :ok <- Automation.required_string(value, "Contact value"),
+         do: Automation.required_string(label, "Contact label")
+  end
+
+  defp validate_detail({:addresses, attrs}) do
+    with {:ok, _, _} <- Resources.properties(attrs, @address_schema), do: :ok
+  end
+
+  defp validate_detail({:group_ids, id}), do: Automation.required_string(id, "Group ID")
+  defp validate_detail(_), do: Automation.invalid("Emails and phones must contain {value, label} pairs")
+
+  defp add_detail(id, {:emails, {value, label}}), do: add_email(id, value, label)
+  defp add_detail(id, {:phones, {value, label}}), do: add_phone(id, value, label)
+  defp add_detail(id, {:addresses, attrs}), do: add_address(id, attrs)
+  defp add_detail(id, {:group_ids, group}), do: add_to_group(id, group)
+
   defp add_value(id, value, label, type, collection, opts) do
     with :ok <- Automation.required_string(id, "Contact ID"),
          :ok <- Automation.required_string(value, "Contact value"),
@@ -128,6 +170,13 @@ defmodule ExMacOSControl.Contacts do
         %{id: id, value: value, label: label},
         opts
       )
+    end
+  end
+
+  defp do_create_with_details(attrs, actions) do
+    with {:ok, id} <- Composition.step(:create_contact, fn -> create_contact(attrs) end),
+         {:ok, _} <- Composition.map(actions, :add_contact_detail, &add_detail(id, &1)) do
+      {:ok, id}
     end
   end
 end

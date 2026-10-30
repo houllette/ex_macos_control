@@ -5,7 +5,7 @@ defmodule ExMacOSControl.Terminal do
   an existing window ID and optional 1-based tab index are supplied. Terminal's
   scripting dictionary cannot create tabs; `new_tab: true` is rejected.
   """
-  alias ExMacOSControl.Automation
+  alias ExMacOSControl.{Automation, Composition, Wait}
   @app "com.apple.Terminal"
 
   def list_sessions(opts \\ []) do
@@ -43,6 +43,35 @@ defmodule ExMacOSControl.Terminal do
         opts
       )
     end
+  end
+
+  @doc """
+  Polls a targeted tab until Terminal reports it idle and returns a session
+  snapshot. This does not prove command success, provide an exit code, or detect
+  background jobs. Use after a command has visibly started; an idle shell can
+  otherwise be observed before queued work begins. Never re-executes a command.
+  """
+  def wait_until_idle(window_id, tab_index, opts \\ []) do
+    with :ok <- target_options(window_id: window_id, tab_index: tab_index),
+         :ok <- Automation.options(opts, [:timeout, :interval, :max_output_bytes]),
+         true <- is_integer(Keyword.get(opts, :interval, 50)) and Keyword.get(opts, :interval, 50) > 0 do
+      Composition.run(&wait_for_idle/3, [window_id, tab_index, opts], Keyword.take(opts, [:timeout, :max_output_bytes]))
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Interval must be a positive integer")
+    end
+  end
+
+  defp wait_for_idle(window_id, tab_index, opts) do
+    predicate = &idle?(window_id, tab_index, &1)
+
+    with :ok <- Composition.step(:wait_for_terminal, &Wait.until/2, [predicate, Keyword.take(opts, [:interval])]) do
+      Composition.step(:read_terminal, &read_session/2, [window_id, tab_index])
+    end
+  end
+
+  defp idle?(window_id, tab_index, remaining) do
+    with {:ok, session} <- read_session(window_id, tab_index, timeout: remaining), do: {:ok, session.busy == false}
   end
 
   defp target_options(opts) do

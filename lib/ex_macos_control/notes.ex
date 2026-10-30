@@ -4,7 +4,7 @@ defmodule ExMacOSControl.Notes do
   reads also expose plain text. Locked/shared content remains subject to Notes.
   List calls are paged; execution options include timeout and max_output_bytes.
   """
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
   @app "com.apple.Notes"
   @summary [
     id: "o.id()",
@@ -119,6 +119,38 @@ defmodule ExMacOSControl.Notes do
         opts
       )
 
+  @doc "Creates a note from plain text, escaping HTML rather than interpreting user text as markup."
+  def create_text_note(title, text, opts \\ []) do
+    if is_binary(text),
+      do: create_note([title: title, body: "<p>" <> Composition.html(text) <> "</p>"], opts),
+      else: Automation.invalid("Note text must be a string")
+  end
+
+  @doc "Creates a note and shows it. A failed show retains the created note ID in error details."
+  def create_and_show(attrs, opts \\ []) do
+    with :ok <- Automation.options(opts, [:folder_id, :separately, :timeout, :max_output_bytes]),
+         true <- is_boolean(Keyword.get(opts, :separately, false)) do
+      Composition.run(
+        fn -> do_create_and_show(attrs, opts) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("separately must be a boolean")
+    end
+  end
+
+  @doc "Copies a note into an optional folder, preserving its HTML body."
+  def duplicate_note(id, opts \\ []) do
+    with :ok <- Automation.options(opts, [:folder_id, :title, :timeout, :max_output_bytes]),
+         :ok <- Automation.required_string(Keyword.get(opts, :title, "Copy"), "Note title") do
+      Composition.run(
+        fn -> do_duplicate_note(id, opts) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    end
+  end
+
   defp escape_text(text),
     do:
       "<p>" <>
@@ -127,4 +159,23 @@ defmodule ExMacOSControl.Notes do
          |> String.replace("<", "&lt;")
          |> String.replace(">", "&gt;")
          |> String.replace("\n", "<br>")) <> "</p>"
+
+  defp do_create_and_show(attrs, opts) do
+    with {:ok, id} <-
+           Composition.step(:create_note, fn -> create_note(attrs, Keyword.take(opts, [:folder_id])) end),
+         :ok <- Composition.step(:show_note, fn -> show_note(id, Keyword.take(opts, [:separately])) end) do
+      {:ok, id}
+    end
+  end
+
+  defp do_duplicate_note(id, opts) do
+    with {:ok, note} <- Composition.step(:read_note, fn -> get_note(id) end) do
+      Composition.step(:create_note, fn ->
+        create_note(
+          [title: Keyword.get(opts, :title, note.title), body: note.body],
+          Keyword.take(opts, [:folder_id])
+        )
+      end)
+    end
+  end
 end

@@ -1,6 +1,9 @@
 defmodule ExMacOSControl.ShortcutsTest do
   use ExUnit.Case, async: false
+  import Mox
   alias ExMacOSControl.{Error, Shortcuts}
+
+  setup :verify_on_exit!
 
   setup do
     directory = Path.expand("tmp/shortcuts-#{System.unique_integer([:positive])}")
@@ -105,5 +108,70 @@ defmodule ExMacOSControl.ShortcutsTest do
       assert {:error, %Error{type: :timeout}} = ExMacOSControl.Script.decompile(file)
       assert {:ok, "result"} = Shortcuts.run("id", timeout: 1000)
     end)
+  end
+
+  test "pipelines pass output to the next Shortcut without changing its text", %{directory: directory} do
+    System.put_env("EXMC_TEST_RESPONSE", " transformed 雪 ")
+    assert {:ok, " transformed 雪 "} = Shortcuts.pipeline(["first", "second"], "original", trim: false)
+    assert File.read!(Path.join(directory, "input")) == " transformed 雪 "
+    assert File.read!(Path.join(directory, "args")) =~ "--\nsecond\n"
+  end
+
+  test "JSON pipelines preserve structured values as JSON text at each boundary", %{directory: directory} do
+    System.put_env("EXMC_TEST_RESPONSE", ~s({"text":"雪","items":[1,2]}))
+
+    assert {:ok, %{"text" => "雪", "items" => [1, 2]}} =
+             Shortcuts.pipeline(["one", "two"], %{"initial" => true}, output: :json)
+
+    assert Jason.decode!(File.read!(Path.join(directory, "input"))) == %{"text" => "雪", "items" => [1, 2]}
+  end
+
+  test "JSON pipeline boundaries preserve scalar booleans, null and quoted strings", %{directory: directory} do
+    for value <- [true, false, nil, "quoted\" 雪"] do
+      System.put_env("EXMC_TEST_RESPONSE", Jason.encode!(value))
+      assert {:ok, ^value} = Shortcuts.pipeline(["one", "two"], "initial", output: :json)
+      assert Jason.decode!(File.read!(Path.join(directory, "input"))) == value
+    end
+  end
+
+  test "pipeline deadline covers all commands and retains acknowledged earlier results", %{directory: directory} do
+    File.write!(Path.join(directory, "shortcuts"), """
+    #!/bin/sh
+    for argument do identifier="$argument"; done
+    if [ "$identifier" = two ]; then /bin/sleep 2; fi
+    printf result
+    """)
+
+    assert {:error, error} = Shortcuts.pipeline(["one", "two", "three"], "initial", timeout: 1000)
+    assert error.type == :timeout
+    assert error.details.outcome == :unknown
+    assert error.details.composition.completed == [%{step: {:shortcut, "one"}, result: "result"}]
+  end
+
+  test "selection handoff uses the captured files as native Shortcut file input", %{directory: directory} do
+    file = Path.join(directory, "selected 雪.txt")
+    File.write!(file, "selected")
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ ->
+      {:ok, ExMacOSControl.TestHelpers.script_output([[file]])}
+    end)
+
+    assert {:ok, "result"} = ExMacOSControl.Workflows.selection_to_shortcut("Process Files")
+    assert File.read!(Path.join(directory, "args")) == "run\n--input-path\n#{file}\n--\nProcess Files\n"
+  end
+
+  test "Shortcut output replaces the text clipboard only after successful execution" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      assert %{"text" => "result"} = opts[:args] |> hd() |> Jason.decode!()
+      {:ok, ~s({"exmc":1,"result":true})}
+    end)
+
+    assert {:ok, "result"} = ExMacOSControl.Workflows.shortcut_to_clipboard("Transform", "input")
+  end
+
+  test "invalid pipelines cannot launch a Shortcut", %{directory: directory} do
+    assert {:error, %Error{}} = Shortcuts.pipeline(["one", ""], "input")
+    assert {:error, %Error{}} = Shortcuts.pipeline(["one"], "input", output: :binary)
+    refute File.exists?(Path.join(directory, "args"))
   end
 end

@@ -76,7 +76,7 @@ defmodule ExMacOSControl.Retry do
   - `opts` - Keyword list of options:
     - `:max_attempts` - Maximum number of attempts (default: 3)
     - `:backoff` - Backoff strategy, `:exponential` or `:linear` (default: `:exponential`)
-    - `:idempotent` - Allow retrying an unknown-outcome timeout (default false)
+    - `:idempotent` - Allow retrying an unknown-outcome or composition timeout (default false)
 
   ## Returns
 
@@ -88,9 +88,10 @@ defmodule ExMacOSControl.Retry do
 
   ## Retry Behavior
 
-  Only timeout errors are retried. A native timeout with `details.outcome: :unknown`
-  is returned immediately unless `idempotent: true` is explicit. All other errors
-  are returned immediately.
+  Only timeout errors are retried. Native unknown-outcome timeouts and composition
+  timeouts are returned immediately unless `idempotent: true` is explicit. A
+  composition may have completed earlier effects even when its last step never
+  started. All other errors are returned immediately.
 
   ## Examples
 
@@ -158,6 +159,9 @@ defmodule ExMacOSControl.Retry do
         {:ok, result}
 
       {:error, %{type: :timeout, details: %{outcome: :unknown}} = error} when not idempotent ->
+        {:error, error}
+
+      {:error, %{type: :timeout, details: %{composition: _}} = error} when not idempotent ->
         {:error, error}
 
       {:error, %{type: :timeout} = error} when attempt < max_attempts ->

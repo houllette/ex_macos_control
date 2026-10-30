@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Media do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
 
   defmacro __using__(opts) do
     bundle = Keyword.fetch!(opts, :bundle_id)
@@ -32,6 +32,10 @@ defmodule ExMacOSControl.Media do
       def list_tracks(opts \\ []), do: ExMacOSControl.Media.list_tracks(@media_bundle, opts)
       def search(query, opts \\ []), do: ExMacOSControl.Media.search(@media_bundle, query, opts)
       def create_playlist(name, opts \\ []), do: ExMacOSControl.Media.create_playlist(@media_bundle, name, opts)
+
+      @doc "Creates a playlist and adds explicit persistent track IDs in order. Partial failures retain the playlist ID."
+      def create_playlist_with_tracks(name, ids, opts \\ []),
+        do: ExMacOSControl.Media.create_playlist_with_tracks(@media_bundle, name, ids, opts)
 
       def add_to_playlist(track_id, playlist_id, opts \\ []),
         do: ExMacOSControl.Media.add_to_playlist(@media_bundle, track_id, playlist_id, opts)
@@ -123,6 +127,17 @@ defmodule ExMacOSControl.Media do
     end
   end
 
+  def create_playlist_with_tracks(bundle, name, ids, opts) do
+    with :ok <- Automation.required_string(name, "Playlist name"),
+         :ok <- Composition.validate_items(ids),
+         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Track ID")) do
+      Composition.run(
+        fn -> do_create_playlist_with_tracks(bundle, name, ids) end,
+        opts
+      )
+    end
+  end
+
   def add_to_playlist(bundle, track_id, playlist_id, opts),
     do:
       Automation.action(
@@ -150,6 +165,13 @@ defmodule ExMacOSControl.Media do
     else
       {:error, _} = error -> error
       _ -> Automation.invalid("Rating must be an integer from 0 to 100")
+    end
+  end
+
+  defp do_create_playlist_with_tracks(bundle, name, ids) do
+    with {:ok, playlist} <- Composition.step(:create_playlist, fn -> create_playlist(bundle, name, []) end),
+         {:ok, _} <- Composition.map(ids, :add_track, fn id -> add_to_playlist(bundle, id, playlist, []) end) do
+      {:ok, playlist}
     end
   end
 end

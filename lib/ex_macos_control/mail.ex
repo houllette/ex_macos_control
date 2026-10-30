@@ -49,7 +49,7 @@ defmodule ExMacOSControl.Mail do
   - Implementing rate limiting if sending multiple emails
   """
 
-  alias ExMacOSControl.{Error, ScriptOutput}
+  alias ExMacOSControl.{Automation, Composition, Error, ScriptOutput}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -538,6 +538,59 @@ defmodule ExMacOSControl.Mail do
   def search_mailbox(mailbox, query, opts),
     do: ExMacOSControl.with_options(opts, fn -> search_mailbox(mailbox, query) end)
 
+  @doc """
+  Saves all attachments from one message into an existing directory, returning
+  paths. Names are prefixed with their attachment index to avoid duplicates.
+  Every output is checked for collisions before the first save. Completed paths
+  survive in error details; saves are not retried.
+  """
+  def save_attachments(account_id, mailbox, id, destination, opts \\ []) do
+    if is_binary(destination) and File.dir?(destination) do
+      Composition.run(
+        fn -> do_save_attachments(account_id, mailbox, id, destination) end,
+        opts
+      )
+    else
+      Automation.invalid("Attachment destination must be an existing directory")
+    end
+  end
+
+  @doc """
+  Creates a saved reply draft with quoted message text; does not send it.
+  This is a new outgoing message, not a promise of Mail conversation threading.
+  Options include body, sender, cc, bcc and execution limits.
+  """
+  def draft_reply(account_id, mailbox, id, opts \\ []) do
+    with :ok <- Automation.options(opts, [:body, :sender, :cc, :bcc, :timeout, :max_output_bytes]),
+         true <- is_binary(Keyword.get(opts, :body, "")) do
+      Composition.run(
+        fn -> do_draft_reply(account_id, mailbox, id, opts) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Reply body must be text")
+    end
+  end
+
+  defp attachment_outputs(attachments, destination) do
+    outputs =
+      Enum.map(attachments, fn a ->
+        {a.index, Path.join(Path.expand(destination), "#{a.index}-#{Path.basename(a.name)}")}
+      end)
+
+    if Enum.all?(outputs, fn {_index, path} -> File.lstat(path) == {:error, :enoent} end),
+      do: {:ok, outputs},
+      else: Automation.invalid("An attachment output already exists")
+  end
+
+  defp reply_address(sender) do
+    case Regex.run(~r/<([^<>]+)>\s*$/, sender) do
+      [_, address] -> address
+      _ -> String.trim(sender)
+    end
+  end
+
   defp mailbox_code do
     """
     var parts=Array.isArray(input.mailbox)?input.mailbox:[input.mailbox];
@@ -548,4 +601,30 @@ defmodule ExMacOSControl.Mail do
   end
 
   defp valid_attachment_files?(files), do: is_list(files) and Enum.all?(files, &(is_binary(&1) and File.regular?(&1)))
+
+  defp do_save_attachments(account_id, mailbox, id, destination) do
+    with {:ok, message} <- Composition.step(:read_message, fn -> get_message(account_id, mailbox, id) end),
+         {:ok, outputs} <- attachment_outputs(message.attachments, destination) do
+      Composition.map(outputs, :save_attachment, &save_one_attachment(account_id, mailbox, id, &1))
+    end
+  end
+
+  defp save_one_attachment(account_id, mailbox, id, {index, path}) do
+    with :ok <- save_attachment(account_id, mailbox, id, index, path), do: {:ok, path}
+  end
+
+  defp do_draft_reply(account_id, mailbox, id, opts) do
+    with {:ok, message} <- Composition.step(:read_message, fn -> get_message(account_id, mailbox, id) end) do
+      recipient = reply_address(message.sender)
+      subject = if Regex.match?(~r/^re:/i, message.subject), do: message.subject, else: "Re: " <> message.subject
+      quoted = message.content |> String.split("\n") |> Enum.map_join("\n", &("> " <> &1))
+      body = Keyword.get(opts, :body, "") <> "\n\n" <> quoted
+
+      Composition.step(:create_draft, fn ->
+        create_draft(
+          Keyword.merge(Keyword.take(opts, [:sender, :cc, :bcc]), to: recipient, subject: subject, body: body)
+        )
+      end)
+    end
+  end
 end

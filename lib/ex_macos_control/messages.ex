@@ -438,6 +438,47 @@ defmodule ExMacOSControl.Messages do
     end
   end
 
+  @doc """
+  Sends the same text to explicit chat IDs in order. Sends real messages, once
+  per supplied ID. Stops at the first error, including unknown outcomes; error
+  details retain acknowledged chat IDs. Acceptance does not prove delivery.
+  """
+  def send_to_chats(ids, text, opts \\ []) do
+    alias ExMacOSControl.{Automation, Composition}
+
+    with :ok <- Composition.validate_items(ids),
+         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Chat ID")),
+         :ok <- Automation.required_string(text, "Message text") do
+      Composition.run(fn -> Composition.map(ids, :send_message, &send_one_chat(&1, text)) end, opts)
+    end
+  end
+
+  @doc """
+  Sends existing files to one explicit chat ID. Validates the entire batch first,
+  sends each once, and retains acknowledged paths on partial failure. These are
+  real sends; a timeout can mean that the last file was already dispatched.
+  """
+  def send_files_to_chat(id, paths, opts \\ []) do
+    alias ExMacOSControl.{Automation, Composition}
+
+    with :ok <- Automation.required_string(id, "Chat ID"),
+         :ok <- Composition.validate_items(paths),
+         true <- Enum.all?(paths, &(is_binary(&1) and File.regular?(&1))) do
+      Composition.run(fn -> Composition.map(paths, :send_file, &send_one_file(id, &1)) end, opts)
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Message files must exist")
+    end
+  end
+
+  defp send_one_chat(id, text) do
+    with :ok <- send_to_chat(id, text), do: {:ok, id}
+  end
+
+  defp send_one_file(id, path) do
+    with :ok <- send_file_to_chat(id, path), do: {:ok, Path.expand(path)}
+  end
+
   @doc "Lists accounts. service_type is nil when an account does not implement that property."
   def list_accounts(opts \\ []) do
     with :ok <- ExMacOSControl.Automation.options(opts, [:limit, :offset, :timeout, :max_output_bytes]),

@@ -7,7 +7,7 @@ defmodule ExMacOSControl.Shortcuts do
   envelope with a user-installed workflow. `sign/3` is an explicit distribution
   operation: Apple receives the shortcut for validation during signing.
   """
-  alias ExMacOSControl.{Automation, Command, Error, Resources}
+  alias ExMacOSControl.{Automation, Command, Composition, Error, Resources}
   @app "com.apple.shortcuts.events"
 
   def list(opts \\ []) do
@@ -100,6 +100,29 @@ defmodule ExMacOSControl.Shortcuts do
     else
       {:error, _} = error -> error
       _ -> Automation.invalid("Workflow must return a version 1 JSON envelope with a result")
+    end
+  end
+
+  @doc """
+  Runs named Shortcuts sequentially, passing each output to the next as input.
+  Options are output (:text or :json), trim, timeout and max_output_bytes.
+  Empty text output becomes an empty string for the next step. JSON maps/lists
+  remain JSON text at the Shortcuts boundary. Effects are never retried.
+  """
+  def pipeline(identifiers, input, opts \\ []) do
+    with :ok <- Composition.validate_items(identifiers),
+         :ok <- Composition.validate_all(identifiers, &Automation.required_string(&1, "Shortcut identity")),
+         :ok <- Automation.options(opts, [:output, :trim, :timeout, :max_output_bytes]),
+         true <- Keyword.get(opts, :output, :text) in [:text, :json],
+         true <- is_boolean(Keyword.get(opts, :trim, true)),
+         {:ok, _} <- serialize_input(input) do
+      Composition.run(
+        fn -> do_pipeline(identifiers, input, opts) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Pipeline output must be :text or :json and trim must be boolean")
     end
   end
 
@@ -198,5 +221,22 @@ defmodule ExMacOSControl.Shortcuts do
       error ->
         error
     end
+  end
+
+  defp do_pipeline(identifiers, input, opts) do
+    identifiers
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, input}, fn {identifier, index}, {:ok, value} ->
+      input = if index > 0 and opts[:output] == :json, do: Jason.encode!(value), else: value
+
+      case Composition.step({:shortcut, identifier}, &run/2, [
+             identifier,
+             Keyword.merge(Keyword.take(opts, [:output, :trim]), input: input)
+           ]) do
+        {:ok, result} -> {:cont, {:ok, result}}
+        :ok -> {:cont, {:ok, ""}}
+        error -> {:halt, error}
+      end
+    end)
   end
 end

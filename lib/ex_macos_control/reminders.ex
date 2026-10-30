@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Reminders do
   @moduledoc "Accounts, lists and reminders with explicit list IDs, dates, priorities and completion state."
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
   @app "com.apple.reminders"
   @fields [
     id: "o.id()",
@@ -79,11 +79,44 @@ defmodule ExMacOSControl.Reminders do
 
   def delete_list(id, opts \\ []), do: Resources.delete(@app, "app.lists", id, %{}, opts)
 
+  @doc "Creates a validated batch in order. Errors retain IDs created before a later failure."
+  def create_many(list_id, items, opts \\ []) do
+    with :ok <- Automation.required_string(list_id, "List ID"),
+         :ok <- Composition.validate_items(items),
+         :ok <- Composition.validate_all(items, &validate_reminder/1) do
+      Composition.run(fn -> Composition.map(items, :create_reminder, &create_reminder(list_id, &1)) end, opts)
+    end
+  end
+
+  @doc "Completes a batch of explicit reminder IDs without retrying mutations."
+  def complete_many(ids, opts \\ []) do
+    with :ok <- Composition.validate_items(ids),
+         :ok <- Composition.validate_all(ids, &Automation.required_string(&1, "Reminder ID")) do
+      Composition.run(
+        fn -> do_complete_many(ids) end,
+        opts
+      )
+    end
+  end
+
+  defp validate_reminder(attrs) do
+    with :ok <- priority(attrs),
+         :ok <- Automation.required_string(attrs[:title], "Reminder title"),
+         {:ok, _, _} <- Resources.properties(attrs, @schema),
+         do: :ok
+  end
+
   defp priority(attrs) do
     with :ok <- Automation.options(attrs, Keyword.keys(@schema)) do
       if Keyword.get(attrs, :priority, 0) in 0..9,
         do: :ok,
         else: Automation.invalid("Priority must be an integer from 0 to 9")
     end
+  end
+
+  defp do_complete_many(ids) do
+    Composition.map(ids, :complete_reminder, fn id ->
+      with :ok <- complete_reminder(id), do: {:ok, id}
+    end)
   end
 end
