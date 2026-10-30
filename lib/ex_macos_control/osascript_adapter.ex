@@ -91,7 +91,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
   @behaviour ExMacOSControl.Adapter
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   @doc """
   Executes an AppleScript script without options.
@@ -130,7 +130,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
     * `script` - The AppleScript code to execute
     * `opts` - Keyword list of options:
-      * `:timeout` - Maximum time in milliseconds to wait for execution
+      * `:timeout` - Non-negative milliseconds to wait; `nil`/`:infinity` waits indefinitely
       * `:args` - List of string arguments to pass to the script
 
   ## Returns
@@ -141,8 +141,10 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   ## Timeout Behavior
 
   When a timeout is specified, the script execution is monitored via a `Task`.
-  If the script doesn't complete within the timeout period, it is terminated
-  and a timeout error is returned.
+  If the script doesn't complete within the timeout period, the waiting task is
+  stopped and a timeout error is returned. This does not guarantee cancellation
+  of the OS process or actions already dispatched to macOS applications. Do not
+  automatically retry non-idempotent actions such as sending messages.
 
   ## Argument Passing
 
@@ -187,11 +189,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     cmd_args = ["-e", script] ++ args
 
     # Execute with or without timeout
-    if timeout do
-      run_with_timeout("osascript", cmd_args, timeout)
-    else
-      run_without_timeout("osascript", cmd_args)
-    end
+    run_command("osascript", cmd_args, timeout)
   end
 
   @doc """
@@ -234,6 +232,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   - `script` - The JXA code to execute
   - `opts` - Keyword list of options:
     - `:args` - List of string arguments to pass to the script (default: `[]`)
+    - `:timeout` - Maximum time in milliseconds to wait (same caveats as `run_applescript/2`)
 
   ## Returns
 
@@ -281,14 +280,23 @@ defmodule ExMacOSControl.OSAScriptAdapter do
           {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
   @impl true
   def run_javascript(script, opts) do
+    timeout = Keyword.get(opts, :timeout)
     args = Keyword.get(opts, :args, [])
-
-    # Build the command arguments: -l JavaScript -e script [args...]
     cmd_args = ["-l", "JavaScript", "-e", script] ++ args
 
-    # JXA doesn't currently support timeout in this implementation
-    # Could be added later similar to run_applescript/2
-    run_without_timeout("osascript", cmd_args)
+    run_command("osascript", cmd_args, timeout)
+  end
+
+  # Validate before starting a task or OS process, particularly for non-idempotent actions.
+  defp run_command(cmd, args, nil), do: run_without_timeout(cmd, args)
+  defp run_command(cmd, args, :infinity), do: run_without_timeout(cmd, args)
+
+  defp run_command(cmd, args, timeout) when is_integer(timeout) and timeout >= 0 do
+    run_with_timeout(cmd, args, timeout)
+  end
+
+  defp run_command(_cmd, _args, _timeout) do
+    {:error, Error.execution_error("Timeout must be a non-negative integer, :infinity, or nil")}
   end
 
   # Extracts the script content from osascript arguments
@@ -300,6 +308,14 @@ defmodule ExMacOSControl.OSAScriptAdapter do
       [file_path | _] when is_binary(file_path) -> Path.basename(file_path)
       _ -> ""
     end
+  end
+
+  # Catch spawn failures inside the task as well as during synchronous execution.
+  defp execute_command(cmd, args) do
+    System.cmd(cmd, args, stderr_to_stdout: true)
+  rescue
+    error in ErlangError ->
+      {:error, Error.execution_error("Unable to execute #{cmd}", reason: error.original, command: cmd)}
   end
 
   # Private function to run command with timeout using Task
@@ -321,13 +337,16 @@ defmodule ExMacOSControl.OSAScriptAdapter do
 
     task =
       Task.async(fn ->
-        System.cmd(cmd, args, stderr_to_stdout: true)
+        execute_command(cmd, args)
       end)
 
     result =
-      case Task.yield(task, timeout) || Task.shutdown(task) do
+      case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
         {:ok, {output, 0}} ->
           {:ok, String.trim(output)}
+
+        {:ok, {:error, error}} ->
+          {:error, error}
 
         {:ok, {stderr, exit_code}} ->
           {:error, Error.parse_osascript_error(stderr, exit_code)}
@@ -377,9 +396,12 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     :telemetry.execute([:ex_macos_control, :applescript, :start], measurements, metadata)
 
     result =
-      case System.cmd(cmd, args, stderr_to_stdout: true) do
+      case execute_command(cmd, args) do
         {output, 0} ->
           {:ok, String.trim(output)}
+
+        {:error, error} ->
+          {:error, error}
 
         {stderr, exit_code} ->
           {:error, Error.parse_osascript_error(stderr, exit_code)}
@@ -421,7 +443,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     * `file_path` - Absolute or relative path to the script file
     * `opts` - Keyword list of options:
       * `:language` - Explicit language (`:applescript` or `:javascript`), overrides detection
-      * `:timeout` - Maximum time in milliseconds to wait for execution
+      * `:timeout` - Non-negative milliseconds to wait; `nil`/`:infinity` waits indefinitely
       * `:args` - List of string arguments to pass to the script
 
   ## Language Detection
@@ -550,11 +572,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     cmd_args = build_command_args(language, file_path, args)
 
     # Execute with or without timeout
-    if timeout do
-      run_with_timeout("osascript", cmd_args, timeout)
-    else
-      run_without_timeout("osascript", cmd_args)
-    end
+    run_command("osascript", cmd_args, timeout)
   end
 
   # Builds osascript command arguments for the given language
@@ -611,6 +629,7 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   - `name` - The name of the Shortcut to run
   - `opts` - Keyword list of options:
     - `:input` - Input data to pass to the shortcut (string, number, map, or list)
+    - `:timeout` - Maximum time in milliseconds to wait for execution
 
   ## Returns
 
@@ -659,12 +678,13 @@ defmodule ExMacOSControl.OSAScriptAdapter do
     script =
       if input do
         serialized = serialize_shortcut_input(input)
-        ~s(tell application "Shortcuts Events" to run shortcut "#{name}" with input #{serialized})
+
+        ~s(tell application "Shortcuts Events" to run shortcut "#{ExMacOSControl.Script.escape_string(name)}" with input #{serialized})
       else
-        ~s(tell application "Shortcuts Events" to run shortcut "#{name}")
+        ~s(tell application "Shortcuts Events" to run shortcut "#{ExMacOSControl.Script.escape_string(name)}")
       end
 
-    case run_applescript(script) do
+    case run_applescript(script, Keyword.take(opts, [:timeout])) do
       {:ok, ""} -> :ok
       {:ok, output} -> {:ok, output}
       {:error, reason} -> {:error, reason}
@@ -693,47 +713,37 @@ defmodule ExMacOSControl.OSAScriptAdapter do
   @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
   @impl true
   def list_shortcuts do
-    script = ~s(tell application "Shortcuts Events" to return name of every shortcut)
+    script = """
+    tell application "Shortcuts Events"
+      set shortcutNames to name of every shortcut
+      set shortcutRows to {}
+      repeat with shortcutName in shortcutNames
+        set end of shortcutRows to {contents of shortcutName}
+      end repeat
+      return my exmc_encode_rows(shortcutRows)
+    end tell
+    #{ScriptOutput.handlers()}
+    """
 
     case run_applescript(script) do
       {:ok, output} ->
-        # Parse comma-separated list from AppleScript
-        shortcuts =
-          output
-          |> String.split(",")
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-
-        {:ok, shortcuts}
+        with {:ok, rows} <- ScriptOutput.decode(output, 1) do
+          {:ok, List.flatten(rows)}
+        end
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  # Private function to serialize input for shortcut execution
+  # Strings and JSON must be escaped as AppleScript data, not source code.
   defp serialize_shortcut_input(input) when is_binary(input) do
-    # Escape double quotes in the string and wrap in quotes
-    escaped = String.replace(input, "\"", "\\\"")
-    ~s("#{escaped}")
+    ~s("#{ExMacOSControl.Script.escape_string(input)}")
   end
 
-  defp serialize_shortcut_input(input) when is_number(input) do
-    # Numbers can be passed directly
-    to_string(input)
-  end
+  defp serialize_shortcut_input(input) when is_number(input), do: to_string(input)
 
-  defp serialize_shortcut_input(input) when is_map(input) do
-    # Convert map to JSON and pass as quoted string
-    json = Jason.encode!(input)
-    escaped = String.replace(json, "\"", "\\\"")
-    ~s("#{escaped}")
-  end
-
-  defp serialize_shortcut_input(input) when is_list(input) do
-    # Convert list to JSON and pass as quoted string
-    json = Jason.encode!(input)
-    escaped = String.replace(json, "\"", "\\\"")
-    ~s("#{escaped}")
+  defp serialize_shortcut_input(input) when is_map(input) or is_list(input) do
+    input |> Jason.encode!() |> serialize_shortcut_input()
   end
 end

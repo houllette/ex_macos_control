@@ -12,7 +12,7 @@ defmodule ExMacOSControl.Adapter do
   """
 
   @type option ::
-          {:timeout, pos_integer()}
+          {:timeout, non_neg_integer() | :infinity | nil}
           | {:args, [String.t()]}
           | {:language, :applescript | :javascript}
           | {:input, String.t() | number() | map() | list()}

@@ -100,7 +100,7 @@ defmodule ExMacOSControl.TestHelpersTest do
     test "returns list of AppleScript fixture files" do
       fixtures = TestHelpers.applescript_fixtures()
       assert is_list(fixtures)
-      assert length(fixtures) > 0
+      assert fixtures != []
     end
 
     test "includes expected fixtures" do
@@ -121,7 +121,7 @@ defmodule ExMacOSControl.TestHelpersTest do
     test "returns list of JavaScript fixture files" do
       fixtures = TestHelpers.javascript_fixtures()
       assert is_list(fixtures)
-      assert length(fixtures) > 0
+      assert fixtures != []
     end
 
     test "includes expected fixtures" do
@@ -142,7 +142,7 @@ defmodule ExMacOSControl.TestHelpersTest do
     test "returns list of error fixture files" do
       fixtures = TestHelpers.error_fixtures()
       assert is_list(fixtures)
-      assert length(fixtures) > 0
+      assert fixtures != []
     end
 
     test "includes expected error fixtures" do

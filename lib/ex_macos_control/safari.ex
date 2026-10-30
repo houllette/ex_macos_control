@@ -59,7 +59,7 @@ defmodule ExMacOSControl.Safari do
   - If no Safari windows exist, `open_url/1` will create one
   """
 
-  alias ExMacOSControl.Error
+  alias ExMacOSControl.{Error, ScriptOutput}
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -241,17 +241,19 @@ defmodule ExMacOSControl.Safari do
       set urlList to {}
       repeat with w in windows
         repeat with t in tabs of w
-          set end of urlList to URL of t
+          if URL of t is not missing value then set end of urlList to {URL of t}
         end repeat
       end repeat
-      return urlList as text
+      return my exmc_encode_rows(urlList)
     end tell
+    #{ScriptOutput.handlers()}
     """
 
     case adapter().run_applescript(script) do
       {:ok, output} ->
-        urls = parse_url_list(output)
-        {:ok, urls}
+        with {:ok, rows} <- ScriptOutput.decode(output, 1) do
+          {:ok, List.flatten(rows)}
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -298,7 +300,11 @@ defmodule ExMacOSControl.Safari do
       if (count of windows) > 0 then
         if (count of tabs of front window) >= #{index} then
           close tab #{index} of front window
+        else
+          error "Tab index is out of bounds" number -1719
         end if
+      else
+        error "No Safari windows are open" number -1728
       end if
     end tell
     """
@@ -314,18 +320,9 @@ defmodule ExMacOSControl.Safari do
 
   ## Private Helpers
 
-  # Parses a comma-separated list of URLs from AppleScript output
-  @spec parse_url_list(String.t()) :: [String.t()]
-  defp parse_url_list(output) do
-    output
-    |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-  end
-
   # Escapes double quotes in strings for AppleScript
   @spec escape_quotes(String.t()) :: String.t()
   defp escape_quotes(string) do
-    String.replace(string, "\"", "\\\"")
+    ExMacOSControl.Script.escape_string(string)
   end
 end

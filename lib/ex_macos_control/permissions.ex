@@ -43,7 +43,7 @@ defmodule ExMacOSControl.Permissions do
 
   ## macOS Version Differences
 
-  - **Ventura (13.x)**: System Preferences
+  - **Ventura (13.x)**: System Settings
   - **Sonoma (14.x+)**: System Settings
   - **Sequoia (15.x+)**: System Settings with updated UI
 
@@ -52,11 +52,9 @@ defmodule ExMacOSControl.Permissions do
 
   alias ExMacOSControl.{Error, Platform}
 
-  @adapter Application.compile_env(
-             :ex_macos_control,
-             :adapter,
-             ExMacOSControl.OSAScriptAdapter
-           )
+  defp adapter do
+    Application.get_env(:ex_macos_control, :adapter, ExMacOSControl.OSAScriptAdapter)
+  end
 
   @doc """
   Checks if accessibility permission is granted for the current application.
@@ -87,31 +85,24 @@ defmodule ExMacOSControl.Permissions do
 
   ## How It Works
 
-  Attempts a simple UI automation task. If it succeeds, permission is granted.
-  If it fails with a permission error, permission is not granted.
+  Queries `AXIsProcessTrusted()` in the osascript process that performs UI
+  automation. This checks the caller's grant without changing focus or prompting.
   """
   @spec check_accessibility() :: {:ok, :granted | :not_granted} | {:error, Error.t()}
   def check_accessibility do
     script = """
-    tell application "System Events"
-      try
-        set frontmost to true
-        return "granted"
-      on error errMsg
-        if errMsg contains "not allowed assistive access" then
-          return "not_granted"
-        else
-          error errMsg
-        end if
-      end try
-    end tell
+    ObjC.import('ApplicationServices');
+    $.AXIsProcessTrusted() ? 'granted' : 'not_granted';
     """
 
-    case @adapter.run_applescript(script) do
+    case adapter().run_javascript(script) do
       {:ok, "granted"} ->
         {:ok, :granted}
 
       {:ok, "not_granted"} ->
+        {:ok, :not_granted}
+
+      {:error, %Error{type: :permission_denied}} ->
         {:ok, :not_granted}
 
       {:error, %Error{message: msg} = error} ->
@@ -161,21 +152,24 @@ defmodule ExMacOSControl.Permissions do
       try
         get name
         return "granted"
-      on error errMsg
+      on error errMsg number errNum
         if errMsg contains "not allowed" or errMsg contains "not authorized" then
           return "not_granted"
         else
-          error errMsg
+          error errMsg number errNum
         end if
       end try
     end tell
     """
 
-    case @adapter.run_applescript(script) do
+    case adapter().run_applescript(script) do
       {:ok, "granted"} ->
         {:ok, :granted}
 
       {:ok, "not_granted"} ->
+        {:ok, :not_granted}
+
+      {:error, %Error{type: :permission_denied}} ->
         {:ok, :not_granted}
 
       {:error, %Error{message: msg} = error} ->
@@ -323,7 +317,7 @@ defmodule ExMacOSControl.Permissions do
     end tell
     """
 
-    case @adapter.run_applescript(script) do
+    case adapter().run_applescript(script) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -356,7 +350,7 @@ defmodule ExMacOSControl.Permissions do
     end tell
     """
 
-    case @adapter.run_applescript(script) do
+    case adapter().run_applescript(script) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -408,11 +402,13 @@ defmodule ExMacOSControl.Permissions do
   # Get current app name and settings app name based on macOS version
   defp get_system_info do
     case Platform.macos_version() do
-      {:ok, version} when version >= 14 ->
-        {"Terminal", "System Settings"}
+      {:ok, version} ->
+        settings =
+          if match?({:ok, parsed} when parsed >= {13, 0, 0}, Platform.parse_macos_version(version)),
+            do: "System Settings",
+            else: "System Preferences"
 
-      {:ok, _} ->
-        {"Terminal", "System Preferences"}
+        {"Terminal", settings}
 
       {:error, _} ->
         {"Terminal", "System Settings"}
@@ -425,6 +421,6 @@ defmodule ExMacOSControl.Permissions do
 
   # Escape quotes in strings
   defp escape_quotes(str) do
-    String.replace(str, "\"", "\\\"")
+    ExMacOSControl.Script.escape_string(str)
   end
 end

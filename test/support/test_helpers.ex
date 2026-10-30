@@ -271,7 +271,8 @@ defmodule ExMacOSControl.TestHelpers do
   """
   @spec with_temp_script(String.t(), String.t(), (String.t() -> any())) :: any()
   def with_temp_script(content, extension, fun) do
-    temp_file = Path.join(System.tmp_dir!(), "ex_macos_control_test_#{:rand.uniform(999_999)}")
+    File.mkdir_p!("tmp")
+    temp_file = Path.expand("tmp/ex_macos_control_test_#{System.unique_integer([:positive])}")
     temp_file_with_ext = temp_file <> extension
 
     try do
@@ -280,6 +281,24 @@ defmodule ExMacOSControl.TestHelpers do
     after
       File.rm(temp_file_with_ext)
     end
+  end
+
+  @doc false
+  @spec script_output([[String.t() | integer()]]) :: String.t()
+  def script_output(rows) do
+    encoded =
+      Enum.map_join(rows, "\n", fn row ->
+        Enum.map_join(row, "\t", fn field ->
+          field
+          |> to_string()
+          |> String.replace("\\", "\\\\")
+          |> String.replace("\t", "\\t")
+          |> String.replace("\n", "\\n")
+          |> String.replace("\r", "\\r")
+        end)
+      end)
+
+    if rows == [], do: "EXMC1\nEND", else: "EXMC1\n" <> encoded <> "\nEND"
   end
 
   @doc """

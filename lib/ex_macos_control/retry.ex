@@ -21,8 +21,13 @@ defmodule ExMacOSControl.Retry do
   - Network-dependent operations within scripts
   - UI automation that may be affected by system responsiveness
 
+  A timeout does not guarantee cancellation of the original macOS action.
+  Only retry operations that are safe to repeat; sending messages or mail can
+  otherwise produce duplicates.
+
   Do NOT use retry logic for:
 
+  - Non-idempotent actions (these may already have completed after a timeout)
   - Syntax errors (these won't be fixed by retrying)
   - Permission errors (user intervention required)
   - Not found errors (resources won't appear by retrying)
@@ -77,6 +82,8 @@ defmodule ExMacOSControl.Retry do
   - `{:ok, result}` - If the function succeeds within max attempts
   - `{:error, error}` - If all attempts fail or a non-retryable error occurs
 
+  Invalid options raise `ArgumentError` before the function is called.
+
   ## Retry Behavior
 
   Only timeout errors (errors with `type: :timeout`) are retried. All other errors
@@ -116,6 +123,14 @@ defmodule ExMacOSControl.Retry do
   def with_retry(fun, opts \\ []) when is_function(fun, 0) and is_list(opts) do
     max_attempts = Keyword.get(opts, :max_attempts, 3)
     backoff = Keyword.get(opts, :backoff, :exponential)
+
+    unless is_integer(max_attempts) and max_attempts > 0 do
+      raise ArgumentError, ":max_attempts must be a positive integer"
+    end
+
+    unless backoff in [:exponential, :linear] do
+      raise ArgumentError, ":backoff must be :exponential or :linear"
+    end
 
     metadata = %{max_attempts: max_attempts, backoff: backoff}
     :telemetry.execute([:ex_macos_control, :retry, :start], %{}, metadata)

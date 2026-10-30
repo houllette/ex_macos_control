@@ -289,10 +289,26 @@ defmodule ExMacOSControl.Error do
   def parse_osascript_error(stderr, exit_code) do
     stderr = String.trim(stderr)
 
-    cond do
-      timeout_error?(exit_code, stderr) ->
+    case {exit_code, extract_error_code(stderr)} do
+      {124, _} ->
         timeout("Script execution timed out", exit_code: exit_code, stderr: stderr)
 
+      {_, -1712} ->
+        timeout("Script execution timed out", exit_code: exit_code, stderr: stderr)
+
+      {_, code} when code in [-1743, -25_211] ->
+        parse_permission_error(stderr, exit_code)
+
+      {_, -10_814} ->
+        parse_not_found_error(stderr, exit_code)
+
+      {_, code} ->
+        parse_unclassified_error(stderr, exit_code, code)
+    end
+  end
+
+  defp parse_unclassified_error(stderr, exit_code, error_code) do
+    cond do
       syntax_error?(stderr) ->
         parse_syntax_error(stderr, exit_code)
 
@@ -301,6 +317,10 @@ defmodule ExMacOSControl.Error do
 
       not_found_error?(stderr) ->
         parse_not_found_error(stderr, exit_code)
+
+      is_nil(error_code) and
+          String.contains?(String.downcase(extract_message(stderr, "execution error:")), ["timeout", "timed out"]) ->
+        timeout("Script execution timed out", exit_code: exit_code, stderr: stderr)
 
       execution_error?(stderr) ->
         parse_execution_error(stderr, exit_code)
@@ -404,24 +424,22 @@ defmodule ExMacOSControl.Error do
   ## Private Helpers
 
   # Error type detection helpers
-  defp timeout_error?(exit_code, stderr) do
-    exit_code == 124 or String.contains?(stderr, "timeout")
-  end
-
   defp syntax_error?(stderr) do
-    String.starts_with?(stderr, "syntax error:")
+    String.contains?(stderr, "syntax error:")
   end
 
   defp permission_error?(stderr) do
-    String.contains?(stderr, "not allowed") or String.contains?(stderr, "not authorized")
+    extract_error_code(stderr) in [-1743, -25_211] or
+      String.contains?(String.downcase(stderr), ["not allowed", "not authorized", "not authorised"])
   end
 
   defp not_found_error?(stderr) do
-    String.contains?(stderr, "could not be found") or String.contains?(stderr, "application \"")
+    extract_error_code(stderr) == -10_814 or
+      String.contains?(String.downcase(stderr), ["could not be found", "application isn't running"])
   end
 
   defp execution_error?(stderr) do
-    String.starts_with?(stderr, "execution error:")
+    String.contains?(stderr, "execution error:")
   end
 
   # Error message formatting
@@ -476,7 +494,7 @@ defmodule ExMacOSControl.Error do
 
   defp parse_permission_error(stderr, exit_code) do
     error_code = extract_error_code(stderr)
-    message = extract_message(stderr, "execution error:") || stderr
+    message = extract_message(stderr, "execution error:")
 
     permission_denied(message,
       exit_code: exit_code,
@@ -488,7 +506,7 @@ defmodule ExMacOSControl.Error do
   defp parse_not_found_error(stderr, exit_code) do
     error_code = extract_error_code(stderr)
     app_name = extract_application_name(stderr)
-    message = extract_message(stderr, "execution error:") || stderr
+    message = extract_message(stderr, "execution error:")
 
     not_found(message,
       exit_code: exit_code,
@@ -499,25 +517,19 @@ defmodule ExMacOSControl.Error do
   end
 
   defp extract_error_code(stderr) do
-    case Regex.run(~r/\((-?\d+)\)/, stderr) do
+    case Regex.run(~r/\((-?\d+)\)\s*$/, stderr) do
       [_, code] -> String.to_integer(code)
       _ -> nil
     end
   end
 
   defp extract_message(stderr, prefix) do
-    stderr
-    |> String.split("\n")
-    |> Enum.find(&String.starts_with?(&1, prefix))
-    |> case do
-      nil ->
-        nil
+    case Regex.run(~r/#{Regex.escape(prefix)}\s*([^\n]*)/, stderr) do
+      [_, message] ->
+        message |> String.trim() |> String.replace(~r/\s*\(-?\d+\)\s*$/, "")
 
-      line ->
-        line
-        |> String.replace_prefix(prefix, "")
-        |> String.trim()
-        |> String.replace(~r/\s*\(-?\d+\)\s*$/, "")
+      _ ->
+        stderr
     end
   end
 

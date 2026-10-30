@@ -4,6 +4,12 @@ defmodule ExMacOSControl.FinderIntegrationTest do
   import Mox
 
   @moduletag :integration
+  @moduletag :desktop
+
+  # ExUnit includes override excludes; :integration alone must not enable mutations.
+  unless Enum.any?(ExUnit.configuration()[:include], &(&1 in [:desktop, {:desktop, true}])) do
+    @moduletag skip: "Requires --include desktop (use an isolated macOS session)"
+  end
 
   alias ExMacOSControl.Finder
 

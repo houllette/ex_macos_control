@@ -5,6 +5,12 @@ defmodule ExMacOSControl.SafariIntegrationTest do
 
   # These tests require macOS with osascript and Safari
   @moduletag :integration
+  @moduletag :desktop
+
+  # ExUnit includes override excludes; :integration alone must not enable mutations.
+  unless Enum.any?(ExUnit.configuration()[:include], &(&1 in [:desktop, {:desktop, true}])) do
+    @moduletag skip: "Requires --include desktop (use an isolated macOS session)"
+  end
 
   setup do
     # Skip if not on macOS with osascript
@@ -80,7 +86,7 @@ defmodule ExMacOSControl.SafariIntegrationTest do
     @tag :integration
     test "executes simple arithmetic JavaScript" do
       assert {:ok, result} = Safari.execute_javascript("2 + 2")
-      assert result == "4"
+      assert {4.0, ""} = Float.parse(result)
     end
 
     @tag :integration
@@ -116,7 +122,7 @@ defmodule ExMacOSControl.SafariIntegrationTest do
     test "returns list of tab URLs" do
       assert {:ok, urls} = Safari.list_tabs()
       assert is_list(urls)
-      assert length(urls) > 0
+      assert urls != []
     end
 
     @tag :integration

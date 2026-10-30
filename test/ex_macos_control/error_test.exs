@@ -90,6 +90,57 @@ defmodule ExMacOSControl.ErrorTest do
   end
 
   describe "parse_osascript_error/2" do
+    test "recognizes location-prefixed errors and preserves messages" do
+      error = Error.parse_osascript_error("/Users/me/script.scpt:12:34: syntax error: Expected expression. (-2741)", 1)
+      assert error.type == :syntax_error
+      assert error.message == "Expected expression."
+      assert error.details.error_code == -2741
+    end
+
+    test "uses numeric permission and timeout codes even with localized messages" do
+      assert %{type: :permission_denied} =
+               Error.parse_osascript_error("execution error: Zugriff verweigert. (-1743)", 1)
+
+      assert %{type: :permission_denied} =
+               Error.parse_osascript_error("execution error: Accessibility denied. (-25211)", 1)
+
+      assert %{type: :timeout} = Error.parse_osascript_error("execution error: AppleEvent timed out. (-1712)", 1)
+    end
+
+    test "takes numeric error codes from the diagnostic suffix, not a path or application name" do
+      for prefix <- ["/tmp/job (2024).scpt:1:2: ", ""] do
+        error =
+          Error.parse_osascript_error(
+            prefix <> ~s|execution error: Zugriff auf "Timeout (2024)" verweigert. (-1743)|,
+            1
+          )
+
+        assert error.type == :permission_denied
+        assert error.details.error_code == -1743
+      end
+    end
+
+    test "does not confuse timeout words in paths or names with a timeout" do
+      for {stderr, type} <- [
+            {~s|/tmp/timeout.scpt:1:2: syntax error: Expected expression. (-2741)|, :syntax_error},
+            {~s|execution error: application "Timeout" got an error: Invalid index. (-1719)|, :execution_error},
+            {~s|execution error: Not authorized to control application "Timeout". (-1743)|, :permission_denied}
+          ] do
+        assert Error.parse_osascript_error(stderr, 1).type == type
+      end
+    end
+
+    test "does not classify every error mentioning an application as not found" do
+      error =
+        Error.parse_osascript_error(
+          ~s|execution error: application "Finder" got an error: Can't get window 1. (-1719)|,
+          1
+        )
+
+      assert error.type == :execution_error
+      assert error.message =~ "Can't get window 1"
+    end
+
     test "parses syntax error from osascript output" do
       stderr = """
       syntax error: Expected end of line but found identifier. (-2741)
@@ -231,7 +282,7 @@ defmodule ExMacOSControl.ErrorTest do
       steps = Error.remediation_steps(error)
 
       assert is_list(steps)
-      assert length(steps) > 0
+      assert [_ | _] = steps
       assert Enum.any?(steps, &String.contains?(&1, "System Settings"))
     end
 

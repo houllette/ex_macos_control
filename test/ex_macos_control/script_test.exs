@@ -150,6 +150,15 @@ defmodule ExMacOSControl.ScriptTest do
   end
 
   describe "quote escaping" do
+    test "escapes backslashes before quotes in every DSL string context" do
+      input = ~S(Path\"Quoted)
+      escaped = ~S(Path\\\"Quoted)
+
+      assert Script.cmd("open", input) == ~s(open "#{escaped}")
+      assert Script.tell(input, ["activate"]) =~ ~s(tell application "#{escaped}")
+      assert Script.tell_obj("process", input, ["activate"]) =~ ~s(tell process "#{escaped}")
+    end
+
     test "escapes single quotes in strings" do
       script = Script.tell("Finder", [Script.cmd("open", ~s(Holden's Folder))])
 
@@ -176,10 +185,9 @@ defmodule ExMacOSControl.ScriptTest do
     test "handles backslashes in strings" do
       script = Script.tell("Finder", [Script.cmd("open", "Path\\With\\Backslashes")])
 
-      # Note: Single backslashes are preserved, only quotes are escaped
       assert script == """
              tell application "Finder"
-               open "Path\\With\\Backslashes"
+               open "Path\\\\With\\\\Backslashes"
              end tell\
              """
     end

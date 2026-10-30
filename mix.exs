@@ -46,11 +46,12 @@ defmodule ExMacosControl.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:telemetry, "~> 1.3", warn_if_outdated: true},
-      {:tidewave, "~> 0.5", only: :dev, warn_if_outdated: true},
-      {:bandit, "~> 1.8", only: :dev, warn_if_outdated: true},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
-      {:sbom, "~> 0.6", only: :dev, runtime: false, warn_if_outdated: true},
+      {:jason, "~> 1.4", warn_if_outdated: true},
+      {:telemetry, "~> 1.4", warn_if_outdated: true},
+      {:tidewave, "~> 0.9.2", only: :dev, warn_if_outdated: true},
+      {:bandit, "~> 1.14", only: :dev, warn_if_outdated: true},
+      {:ex_doc, "~> 0.40.4", only: :dev, runtime: false, warn_if_outdated: true},
+      {:sbom, "~> 0.12.0", only: :dev, runtime: false, warn_if_outdated: true},
       {:mox, "~> 1.2", only: :test, warn_if_outdated: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false, warn_if_outdated: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false, warn_if_outdated: true},
@@ -77,6 +78,10 @@ defmodule ExMacosControl.MixProject do
       extras: [
         "README.md",
         "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "LICENSE",
+        "docs/testing.md",
+        "docs/git_hooks.md",
         "docs/guides/getting_started.md",
         "docs/guides/common_patterns.md",
         "docs/guides/dsl_vs_raw.md",
@@ -114,7 +119,8 @@ defmodule ExMacosControl.MixProject do
 
   defp aliases do
     [
-      tidewave: "run --no-halt -e 'Agent.start(fn -> Bandit.start_link(plug: Tidewave, port: 4000) end)'",
+      tidewave:
+        "run --no-halt -e 'Agent.start(fn -> Bandit.start_link(plug: Tidewave, ip: {127, 0, 0, 1}, port: 4000) end)'",
       quality: ["format --check-formatted", "credo --strict", "dialyzer"],
       "format.check": ["format --check-formatted"]
     ]

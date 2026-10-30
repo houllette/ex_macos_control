@@ -110,7 +110,7 @@ defmodule ExMacOSControl.JavaScriptIntegrationTest do
     @tag :integration
     test "all JavaScript fixtures are valid and readable" do
       fixtures = TestHelpers.javascript_fixtures()
-      assert length(fixtures) > 0
+      assert fixtures != []
 
       Enum.each(fixtures, fn fixture ->
         path = TestHelpers.fixture_path("javascript/#{fixture}")

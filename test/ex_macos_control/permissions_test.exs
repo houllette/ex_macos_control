@@ -13,14 +13,15 @@ defmodule ExMacOSControl.PermissionsTest do
       {:ok, "granted"}
     end)
 
+    stub(ExMacOSControl.AdapterMock, :run_javascript, fn _script -> {:ok, "granted"} end)
+
     :ok
   end
 
   describe "check_accessibility/0" do
     test "returns :granted when permission is granted" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "System Events"
-        assert script =~ "set frontmost to true"
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn script ->
+        assert script =~ "AXIsProcessTrusted()"
         {:ok, "granted"}
       end)
 
@@ -28,7 +29,7 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "returns :not_granted when script returns not_granted" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
         {:ok, "not_granted"}
       end)
 
@@ -36,7 +37,7 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "detects permission error from error message containing 'not allowed'" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
         {:error, %Error{type: :permission_denied, message: "not allowed assistive access"}}
       end)
 
@@ -44,19 +45,28 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "returns error for other failures" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
         {:error, %Error{type: :execution_error, message: "something else"}}
       end)
 
       assert {:error, %Error{type: :execution_error}} = Permissions.check_accessibility()
     end
 
-    test "generates correct AppleScript for accessibility check" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "tell application \"System Events\""
-        assert script =~ "set frontmost to true"
-        assert script =~ "return \"granted\""
-        assert script =~ "not allowed assistive access"
+    test "recognizes structured permission errors without relying on English text" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
+        {:error, %Error{type: :permission_denied, message: "Zugriff verweigert"}}
+      end)
+
+      assert {:ok, :not_granted} = Permissions.check_accessibility()
+    end
+
+    test "queries caller trust without requesting permissions or changing focus" do
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn script ->
+        assert script =~ "ObjC.import('ApplicationServices')"
+        assert script =~ "AXIsProcessTrusted()"
+        refute script =~ "AXIsProcessTrustedWithOptions"
+        refute script =~ "UI elements enabled"
+        refute script =~ "set frontmost"
         {:ok, "granted"}
       end)
 
@@ -117,6 +127,14 @@ defmodule ExMacOSControl.PermissionsTest do
       assert {:error, %Error{}} = Permissions.check_automation("App")
     end
 
+    test "recognizes structured automation permission errors without relying on English text" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
+        {:error, %Error{type: :permission_denied, message: "Zugriff verweigert"}}
+      end)
+
+      assert {:ok, :not_granted} = Permissions.check_automation("Safari")
+    end
+
     test "generates correct AppleScript for automation check" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "tell application \"Mail\""
@@ -124,6 +142,8 @@ defmodule ExMacOSControl.PermissionsTest do
         assert script =~ "return \"granted\""
         assert script =~ "not allowed"
         assert script =~ "not authorized"
+        assert script =~ "on error errMsg number errNum"
+        assert script =~ "error errMsg number errNum"
         {:ok, "granted"}
       end)
 
@@ -315,9 +335,8 @@ defmodule ExMacOSControl.PermissionsTest do
 
   describe "check_all/0" do
     test "checks multiple permissions and returns status map" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 5, fn script ->
+      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn script ->
         cond do
-          script =~ "System Events" -> {:ok, "granted"}
           script =~ "Safari" -> {:ok, "not_granted"}
           script =~ "Finder" -> {:ok, "granted"}
           script =~ "Mail" -> {:ok, "granted"}
@@ -335,7 +354,11 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "handles errors gracefully" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 5, fn _script ->
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _script ->
+        {:error, %Error{type: :execution_error, message: "failed"}}
+      end)
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn _script ->
         {:error, %Error{type: :execution_error, message: "failed"}}
       end)
 
@@ -349,7 +372,7 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "returns map with all expected keys" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 5, fn _script ->
+      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn _script ->
         {:ok, "granted"}
       end)
 
@@ -363,9 +386,8 @@ defmodule ExMacOSControl.PermissionsTest do
     end
 
     test "handles mixed permission states" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, 5, fn script ->
+      expect(ExMacOSControl.AdapterMock, :run_applescript, 4, fn script ->
         cond do
-          script =~ "System Events" -> {:ok, "granted"}
           script =~ "Safari" -> {:error, %Error{message: "not allowed"}}
           script =~ "Finder" -> {:ok, "granted"}
           script =~ "Mail" -> {:ok, "not_granted"}

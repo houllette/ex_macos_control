@@ -34,9 +34,10 @@ fi
 echo -e "${GREEN}✅ All quality checks passed${NC}"
 echo ""
 
-# 3. Generate SBOM
+# 3. Validate generation without changing the tracked SBOM's timestamp and UUID.
 echo "📋 Generating SBOM (Software Bill of Materials)..."
-if ! mix sbom.cyclonedx -d; then
+mkdir -p tmp
+if ! mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output tmp/bom-pre-push.xml --force; then
   echo -e "${RED}❌ SBOM generation failed!${NC}"
   echo -e "${YELLOW}Check sbom errors above${NC}"
   exit 1
@@ -54,19 +55,11 @@ fi
 echo -e "${GREEN}✅ All tests passed${NC}"
 echo ""
 
-# 5. Check for uncommitted SBOM changes
-if [ -f "sbom.cyclonedx.json" ]; then
-  if ! git diff --quiet sbom.cyclonedx.json 2>/dev/null; then
-    echo -e "${YELLOW}⚠️  sbom.cyclonedx.json has uncommitted changes${NC}"
-    echo -e "${YELLOW}Commit the SBOM file before pushing${NC}"
-    exit 1
-  fi
-elif [ -f "priv/sbom.cyclonedx.json" ]; then
-  if ! git diff --quiet priv/sbom.cyclonedx.json 2>/dev/null; then
-    echo -e "${YELLOW}⚠️  priv/sbom.cyclonedx.json has uncommitted changes${NC}"
-    echo -e "${YELLOW}Commit the SBOM file before pushing${NC}"
-    exit 1
-  fi
+# 5. Check both staged and unstaged SBOM changes, including deletion.
+if ! git diff --quiet HEAD -- bom.xml; then
+  echo -e "${YELLOW}⚠️  bom.xml has uncommitted changes${NC}"
+  echo -e "${YELLOW}Commit the SBOM file before pushing${NC}"
+  exit 1
 fi
 
 echo -e "${GREEN}🎉 All pre-push checks passed! Safe to push.${NC}"

@@ -36,7 +36,7 @@ echo ""
 
 # 3. Generate SBOM
 echo "📋 Generating SBOM (Software Bill of Materials)..."
-if ! mix sbom.cyclonedx -d; then
+if ! mix sbom.cyclonedx --schema 1.6 --format xml --exclude-system-dependencies --output bom.xml --force; then
   echo -e "${RED}❌ SBOM generation failed!${NC}"
   echo -e "${YELLOW}Check sbom errors above${NC}"
   exit 1
@@ -45,13 +45,9 @@ echo -e "${GREEN}✅ SBOM generated successfully${NC}"
 echo ""
 
 # 4. Check if SBOM file was generated and stage it
-if [ -f "sbom.cyclonedx.json" ]; then
-  echo "📎 Staging sbom.cyclonedx.json..."
-  git add sbom.cyclonedx.json
-  echo -e "${GREEN}✅ SBOM file staged${NC}"
-elif [ -f "priv/sbom.cyclonedx.json" ]; then
-  echo "📎 Staging priv/sbom.cyclonedx.json..."
-  git add priv/sbom.cyclonedx.json
+if [ -f "bom.xml" ]; then
+  echo "📎 Staging bom.xml..."
+  git add bom.xml
   echo -e "${GREEN}✅ SBOM file staged${NC}"
 else
   echo -e "${YELLOW}⚠️  No SBOM file found to stage${NC}"

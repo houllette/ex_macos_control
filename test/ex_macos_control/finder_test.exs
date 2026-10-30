@@ -1,5 +1,6 @@
 defmodule ExMacOSControl.FinderTest do
   use ExUnit.Case, async: true
+  import ExMacOSControl.TestHelpers, only: [script_output: 1]
   import Mox
 
   setup :verify_on_exit!
@@ -8,7 +9,7 @@ defmodule ExMacOSControl.FinderTest do
 
   describe "get_selection/0" do
     test "returns parsed list of selected paths" do
-      output = "/Users/me/file1.txt, /Users/me/file2.txt"
+      output = script_output([["/Users/me/file1.txt"], ["/Users/me/file2.txt"]])
 
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "tell application \"Finder\""
@@ -22,9 +23,25 @@ defmodule ExMacOSControl.FinderTest do
       assert "/Users/me/file2.txt" in paths
     end
 
+    test "preserves commas, newlines, Unicode and trailing spaces in paths" do
+      paths = ["/Users/me/one,two|雪.txt ", "/Users/me/line\nbreak\tfile"]
+
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
+        assert script =~ "my exmc_encode_rows(paths)"
+        {:ok, script_output(Enum.map(paths, &[&1]))}
+      end)
+
+      assert {:ok, ^paths} = Finder.get_selection()
+    end
+
+    test "rejects malformed output instead of returning corrupted paths" do
+      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, "/one,/two"} end)
+      assert {:error, %ExMacOSControl.Error{type: :execution_error}} = Finder.get_selection()
+    end
+
     test "returns empty list when no selection" do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, ""}
+        {:ok, script_output([])}
       end)
 
       assert {:ok, []} = Finder.get_selection()
@@ -38,6 +55,18 @@ defmodule ExMacOSControl.FinderTest do
       assert {:error, error} = Finder.get_selection()
       assert error.type == :execution_error
     end
+  end
+
+  test "escapes quotes and backslashes in Finder paths" do
+    path = ~S(/Users/me/Path\"Quoted)
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, 2, fn script ->
+      assert script =~ ~S(POSIX file "/Users/me/Path\\\"Quoted")
+      {:ok, ""}
+    end)
+
+    assert :ok = Finder.open_location(path)
+    assert :ok = Finder.new_window(path)
   end
 
   describe "open_location/1" do
@@ -118,6 +147,7 @@ defmodule ExMacOSControl.FinderTest do
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
         assert script =~ "tell application \"Finder\""
         assert script =~ "set current view of front Finder window to icon view"
+        assert script =~ ~s(error "No Finder windows are open" number -1728)
         {:ok, ""}
       end)
 

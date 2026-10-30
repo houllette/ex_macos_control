@@ -38,38 +38,11 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
   end
 
   describe "get_recent_messages/1" do
-    @tag :skip
-    test "retrieves messages from existing chat" do
-      # Replace with actual test phone number/contact
-      recipient = System.get_env("TEST_MESSAGES_RECIPIENT") || "+1234567890"
+    test "reports unsupported history instead of compiling an invalid script" do
+      assert {:error, %ExMacOSControl.Error{type: :execution_error, message: message}} =
+               Messages.get_recent_messages("nobody@example.invalid")
 
-      assert {:ok, messages} = Messages.get_recent_messages(recipient)
-      assert is_list(messages)
-
-      # If there are messages, verify structure
-      if length(messages) > 0 do
-        message = hd(messages)
-        assert Map.has_key?(message, :from)
-        assert Map.has_key?(message, :text)
-        assert Map.has_key?(message, :timestamp)
-        assert is_binary(message.from)
-        assert is_binary(message.text)
-        assert is_binary(message.timestamp)
-      end
-    end
-
-    @tag :skip
-    test "handles non-existent chat gracefully" do
-      # Try to get messages from a chat that likely doesn't exist
-      recipient = "nonexistent-recipient-#{System.unique_integer()}"
-
-      result = Messages.get_recent_messages(recipient)
-
-      # Should either return empty list or error
-      case result do
-        {:ok, messages} -> assert messages == []
-        {:error, error} -> assert error.type in [:not_found, :execution_error]
-      end
+      assert message =~ "history is not supported"
     end
   end
 
@@ -80,15 +53,14 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
       assert is_list(chats)
 
       # If there are chats, verify structure
-      if length(chats) > 0 do
+      if chats != [] do
         chat = hd(chats)
         assert Map.has_key?(chat, :id)
         assert Map.has_key?(chat, :name)
         assert Map.has_key?(chat, :unread)
         assert is_binary(chat.id)
         assert is_binary(chat.name)
-        assert is_integer(chat.unread)
-        assert chat.unread >= 0
+        assert is_nil(chat.unread)
       end
     end
 
@@ -101,32 +73,15 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
         assert Map.keys(chat) |> Enum.sort() == [:id, :name, :unread]
         assert is_binary(chat.id)
         assert is_binary(chat.name)
-        assert is_integer(chat.unread)
+        assert is_nil(chat.unread)
       end)
     end
   end
 
   describe "get_unread_count/0" do
     @tag :skip
-    test "returns total unread count" do
-      assert {:ok, count} = Messages.get_unread_count()
-      assert is_integer(count)
-      assert count >= 0
-    end
-
-    @tag :skip
-    test "count matches sum of individual chat unreads" do
-      assert {:ok, total_count} = Messages.get_unread_count()
-      assert {:ok, chats} = Messages.list_chats()
-
-      # Sum up unread counts from all chats
-      sum_of_unreads =
-        chats
-        |> Enum.map(& &1.unread)
-        |> Enum.sum()
-
-      # Should match (or be close - there can be timing issues)
-      assert total_count == sum_of_unreads
+    test "reports unsupported unread counts instead of inventing zero" do
+      assert {:error, %ExMacOSControl.Error{type: :execution_error}} = Messages.get_unread_count()
     end
   end
 end
