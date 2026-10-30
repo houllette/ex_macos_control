@@ -107,6 +107,8 @@ defmodule ExMacosControl.MixProject do
           ExMacOSControl.Capture.Message,
           ExMacOSControl.Capture.Event,
           ExMacOSControl.Composition,
+          ExMacOSControl.Composition.Context,
+          ExMacOSControl.Composition.Journal,
           ExMacOSControl.Workflows,
           ExMacOSControl.Applications,
           ExMacOSControl.Desktop,

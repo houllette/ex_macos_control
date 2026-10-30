@@ -647,7 +647,7 @@ defmodule ExMacOSControl.Mail do
       quoted = message.content |> String.split("\n") |> Enum.map_join("\n", &("> " <> &1))
       body = Keyword.get(opts, :body, "") <> "\n\n" <> quoted
 
-      Composition.step(:create_draft, fn ->
+      Composition.effect(:create_draft, fn ->
         create_draft(
           Keyword.merge(Keyword.take(opts, [:sender, :cc, :bcc]), to: recipient, subject: subject, body: body)
         )

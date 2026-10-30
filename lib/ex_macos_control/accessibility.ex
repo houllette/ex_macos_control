@@ -211,7 +211,7 @@ defmodule ExMacOSControl.Accessibility do
   defp toggle_if_needed(_process, _selectors, 0, false), do: :ok
 
   defp toggle_if_needed(process, selectors, _value, _checked),
-    do: Composition.step(:toggle_checkbox, fn -> click(process, selectors) end)
+    do: Composition.effect(:toggle_checkbox, fn -> click(process, selectors) end)
 
   defp actionable(process, selectors, opts),
     do:
@@ -340,7 +340,7 @@ defmodule ExMacOSControl.Accessibility do
              %{},
              wait_opts(opts)
            ),
-         :ok <- Composition.step(:fill_field, fn -> set_attribute(process, selectors, "AXValue", value) end) do
+         :ok <- Composition.effect(:fill_field, fn -> set_attribute(process, selectors, "AXValue", value) end) do
       wait_for_attribute(process, selectors, "AXValue", value, wait_opts(opts))
     end
   end
@@ -361,7 +361,7 @@ defmodule ExMacOSControl.Accessibility do
 
   defp do_click_and_wait(process, selectors, expected, opts) do
     with :ok <- actionable(process, selectors, wait_opts(opts)),
-         :ok <- Composition.step(:click_element, fn -> click(process, selectors) end) do
+         :ok <- Composition.effect(:click_element, fn -> click(process, selectors) end) do
       Composition.step(:wait_for_result, fn -> wait_for(process, expected, wait_opts(opts)) end)
     end
   end

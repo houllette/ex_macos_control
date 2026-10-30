@@ -195,7 +195,7 @@ defmodule ExMacOSControl.Photos do
 
   defp do_import_into_new_album(paths, name, opts) do
     with {:ok, album} <-
-           Composition.step(:create_album, fn -> create_album(name, Keyword.take(opts, [:folder_id])) end),
+           Composition.effect(:create_album, fn -> create_album(name, Keyword.take(opts, [:folder_id])) end),
          {:ok, media} <-
            Composition.step(:import_files, fn ->
              import_files(paths, Keyword.merge(Keyword.take(opts, [:skip_duplicates]), album_id: album))

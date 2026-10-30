@@ -169,7 +169,7 @@ defmodule ExMacOSControl.Media do
   end
 
   defp do_create_playlist_with_tracks(bundle, name, ids) do
-    with {:ok, playlist} <- Composition.step(:create_playlist, fn -> create_playlist(bundle, name, []) end),
+    with {:ok, playlist} <- Composition.effect(:create_playlist, fn -> create_playlist(bundle, name, []) end),
          {:ok, _} <- Composition.map(ids, :add_track, fn id -> add_to_playlist(bundle, id, playlist, []) end) do
       {:ok, playlist}
     end
