@@ -88,6 +88,10 @@ defmodule ExMacOSControl.Composition.Trace do
        when is_atom(type) and not is_nil(type) and (is_binary(value) or is_integer(value)),
        do: [%{type: type, id: value}]
 
+  defp resources(_name, {:ok, %{id: id}}, type)
+       when is_atom(type) and not is_nil(type) and (is_binary(id) or is_integer(id)),
+       do: [%{type: type, id: id}]
+
   defp resources({name, _index}, result, nil), do: resources(name, result, nil)
 
   defp resources(:open_page, {:ok, %{window_id: id, tab_index: index}}, nil),

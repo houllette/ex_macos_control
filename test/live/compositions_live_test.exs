@@ -3,7 +3,6 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
   alias ExMacOSControl.{
     Accessibility,
-    Automation,
     Calendar,
     Finder,
     ImageEvents,
@@ -59,37 +58,22 @@ defmodule ExMacOSControl.CompositionsLiveTest do
     File.write!(path, live.marker)
     assert {:ok, previous} = Finder.get_selection()
     on_exit(fn -> Finder.set_selection(Enum.filter(previous, &File.exists?/1)) end)
-    assert :ok = ExMacOSControl.SystemEvents.reveal_in_finder(path)
-
-    assert :ok =
-             ExMacOSControl.Wait.until(
-               fn ->
-                 with {:ok, selection} <- Finder.get_selection(), do: {:ok, selection == [path]}
-               end,
-               timeout: 5000
-             )
+    assert {:ok, capture} = Finder.select_and_capture([path])
+    assert capture.paths == [path]
 
     recipient = System.get_env("EXMC_TEST_EMAIL", "fixture@example.invalid")
 
     assert {:ok, draft} =
              Live.effect(live, :selection_to_draft, fn ->
-               Workflows.selection_to_draft(to: recipient, subject: live.marker, body: live.marker)
+               Workflows.selection_to_verified_draft(to: recipient, subject: live.marker, body: live.marker)
              end)
 
-    Live.own(live, :draft, draft, fn ->
-      Automation.action(
-        "com.apple.mail",
-        "app.outgoingMessages().filter(function(o){return o.subject()===input.marker;}).forEach(function(o){app.close(o,{saving:'no'});});app.draftsMailbox().messages.whose({subject:input.marker})().forEach(function(o){app.delete(o);});",
-        %{id: draft, marker: live.marker}
-      )
-    end)
-
-    assert {:ok, true} =
-             Live.query(
-               "com.apple.mail",
-               "var values=app.draftsMailbox().messages.whose({subject:input.marker})();if(values.length!==1)return false;var o=values[0];return o.content().indexOf(input.marker)>=0&&o.mailAttachments.length===1;",
-               %{id: draft, marker: live.marker}
-             )
+    Live.own(live, :draft, draft.id, fn -> ExMacOSControl.Mail.delete_draft(draft) end)
+    assert {:ok, saved} = ExMacOSControl.Mail.get_draft(draft)
+    assert saved.id == draft.id
+    assert saved.subject == live.marker
+    assert saved.content =~ live.marker
+    assert length(saved.attachments) == 1
 
     Live.event(live, "verified")
   end

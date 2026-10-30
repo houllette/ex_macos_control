@@ -434,6 +434,8 @@ defmodule ExMacOSControl.Finder do
   @doc "Moves a batch once, stopping on the first failure; completed paths are available in error details."
   defdelegate move_files(paths, destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
   defdelegate capture_selection(opts \\ []), to: ExMacOSControl.Capture, as: :selection
+  @doc "Reveals and selects files once, waits for the exact selection, and returns a frozen capture."
+  defdelegate select_and_capture(paths, opts \\ []), to: ExMacOSControl.Finder.Compositions
 
   defp transfer(command, path, destination, opts) do
     if is_binary(path) and is_binary(destination) and File.exists?(path) and File.dir?(destination) and

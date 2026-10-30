@@ -112,7 +112,8 @@ defmodule ExMacosControl.MixProject do
           ExMacOSControl.Workflows,
           ExMacOSControl.Applications,
           ExMacOSControl.Desktop,
-          ExMacOSControl.Safari.Page
+          ExMacOSControl.Safari.Page,
+          ExMacOSControl.Mail.Draft
         ],
         Core: [
           ExMacOSControl,

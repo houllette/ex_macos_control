@@ -52,6 +52,17 @@ defmodule ExMacOSControl.Workflows.Recipes do
     end
   end
 
+  def selection_to_verified_draft(mail_options, opts \\ []) do
+    with :ok <- mail_options(mail_options) do
+      Finder.with_selection(
+        fn paths ->
+          Mail.create_verified_draft(Keyword.put(mail_options, :attachments, paths))
+        end,
+        opts
+      )
+    end
+  end
+
   @doc "Sends selected Finder files to an explicit Messages chat ID. Real sends, attempted once each."
   def selection_to_chat(chat_id, opts \\ []) do
     with :ok <- Automation.required_string(chat_id, "Chat ID") do
