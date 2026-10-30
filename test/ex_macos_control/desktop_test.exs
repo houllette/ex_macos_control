@@ -30,4 +30,24 @@ defmodule ExMacOSControl.DesktopTest do
     assert Task.await(task) == :ok
     assert :ok = Desktop.with_lock(fn -> :ok end)
   end
+
+  test "a killed owner releases its host lock without running callback cleanup" do
+    parent = self()
+
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        Desktop.with_lock(fn ->
+          send(parent, :owned)
+
+          receive do
+            :never -> :ok
+          end
+        end)
+      end)
+
+    assert_receive :owned
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^monitor, :process, ^pid, :killed}
+    assert :ok = Desktop.with_lock(fn -> :ok end, timeout: 1000)
+  end
 end
