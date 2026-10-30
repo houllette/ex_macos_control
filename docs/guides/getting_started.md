@@ -29,7 +29,7 @@ Add ExMacOSControl to your `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_macos_control, "~> 0.1.0"}
+    {:ex_macos_control, "~> 0.2.0"}
   ]
 end
 ```
