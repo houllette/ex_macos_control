@@ -16,6 +16,8 @@ defmodule ExMacOSControl.Workflows do
 
   @doc "Creates a Mail draft attaching selected Finder files. Mail options are passed separately."
   defdelegate selection_to_draft(mail_options, opts \\ []), to: ExMacOSControl.Workflows.Recipes
+  @doc "Captures selected files and creates a verified saved Mail draft, returning a durable Draft reference."
+  defdelegate selection_to_verified_draft(mail_options, opts \\ []), to: ExMacOSControl.Workflows.Recipes
 
   @doc "Sends selected Finder files to an explicit Messages chat ID. Real sends, attempted once each."
   defdelegate selection_to_chat(chat_id, opts \\ []), to: ExMacOSControl.Workflows.Recipes

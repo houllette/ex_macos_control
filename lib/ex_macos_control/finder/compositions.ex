@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Finder.Compositions do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Finder, Validation}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Finder, Validation}
 
   def with_selection(fun, opts \\ []) when is_function(fun, 1) do
     Composition.run(
@@ -21,6 +21,47 @@ defmodule ExMacOSControl.Finder.Compositions do
 
   def copy_files(paths, destination, opts \\ []), do: transfer(paths, destination, :copy, opts)
   def move_files(paths, destination, opts \\ []), do: transfer(paths, destination, :move, opts)
+
+  def select_and_capture(paths, opts \\ []) do
+    with :ok <- Validation.items(paths),
+         true <- Enum.all?(paths, &(is_binary(&1) and File.exists?(&1))) do
+      expected = paths |> Enum.map(&Path.expand/1) |> Enum.uniq() |> Enum.sort()
+      Desktop.with_lock(fn -> select_capture(expected) end, opts)
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Selected files must exist")
+    end
+  end
+
+  defp select_capture(paths) do
+    source = """
+    on run argv
+      set selectedItems to {}
+      repeat with p in argv
+        set end of selectedItems to (POSIX file (contents of p) as alias)
+      end repeat
+      tell application "Finder"
+        reveal selectedItems
+        activate
+        set selection to selectedItems
+      end tell
+    end run
+    """
+
+    with {:ok, _} <- Composition.effect(:select_files, &ExMacOSControl.run_applescript/2, [source, [args: paths]]),
+         :ok <- Composition.verify(:selected_files, &selection_matches?(paths, &1)),
+         {:ok, capture} <- Finder.capture_selection(),
+         true <- Enum.sort(capture.paths) == paths do
+      {:ok, capture}
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Finder selection changed during capture")
+    end
+  end
+
+  defp selection_matches?(paths, remaining) do
+    with {:ok, selected} <- Finder.get_selection(timeout: remaining), do: {:ok, Enum.sort(selected) == paths}
+  end
 
   defp transfer(paths, destination, operation, opts) do
     with :ok <- Validation.items(paths),

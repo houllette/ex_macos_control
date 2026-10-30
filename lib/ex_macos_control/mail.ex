@@ -428,7 +428,7 @@ defmodule ExMacOSControl.Mail do
     end
   end
 
-  @doc "Creates and saves a draft without sending it; returns its outgoing-message ID."
+  @doc "Creates and saves a draft without sending it; returns its transient outgoing-message ID. Use create_verified_draft/1 for a saved-message reference."
   def create_draft(opts) do
     with :ok <- validate_email_opts(opts),
          :ok <- validate_email_list(List.wrap(opts[:to])),
@@ -444,9 +444,23 @@ defmodule ExMacOSControl.Mail do
   end
 
   defdelegate capture_message(account, mailbox, id, opts \\ []), to: ExMacOSControl.Capture, as: :message
+  @doc "Creates once, then verifies a newly saved message and returns a durable Draft reference. Never sends."
+  defdelegate create_verified_draft(opts), to: ExMacOSControl.Mail.Compositions, as: :create
+  defdelegate get_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :get
+  @doc "Deletes the saved draft only when its captured identity still matches."
+  defdelegate delete_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :delete
 
   @doc "Creates a draft from captured content. File captures attach their paths; other captures supply text."
   def create_draft_from(capture, opts) do
+    with {:ok, attrs} <- draft_from_options(capture, opts), do: create_draft(attrs)
+  end
+
+  @doc "Creates and verifies a saved draft from an immutable capture."
+  def create_verified_draft_from(capture, opts) do
+    with {:ok, attrs} <- draft_from_options(capture, opts), do: create_verified_draft(attrs)
+  end
+
+  defp draft_from_options(capture, opts) do
     with :ok <-
            Automation.options(opts, [
              :to,
@@ -466,7 +480,7 @@ defmodule ExMacOSControl.Mail do
         |> Keyword.put_new(:body, ExMacOSControl.Capture.render(capture, :reference))
         |> Keyword.put_new(:attachments, ExMacOSControl.Capture.files(capture))
 
-      create_draft(opts)
+      {:ok, opts}
     end
   end
 
