@@ -116,6 +116,24 @@ defmodule ExMacOSControl.CompositionTraceTest do
              Journal.inspect_run(Path.join(directory, id <> ".jsonl"))
   end
 
+  test "execution errors after dispatch do not imply that an effect was rolled back", %{directory: directory} do
+    id = String.duplicate("e", 32)
+
+    assert {:error, _} =
+             Composition.run(
+               fn ->
+                 Composition.effect(:partial_write, fn ->
+                   {:error, Error.execution_error("app failed after changing state")}
+                 end)
+               end,
+               journal: directory,
+               run_id: id
+             )
+
+    assert {:ok, %{status: :needs_reconciliation, pending: [_]}} =
+             Journal.inspect_run(Path.join(directory, id <> ".jsonl"))
+  end
+
   test "a killed caller leaves a durable intent rather than an invented successful result", %{directory: directory} do
     parent = self()
     id = String.duplicate("c", 32)
