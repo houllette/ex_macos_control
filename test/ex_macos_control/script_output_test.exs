@@ -55,6 +55,64 @@ defmodule ExMacOSControl.ScriptOutputTest do
   end
 
   @tag :integration
+  test "native encoder preserves width distinctions and Unicode character sequences" do
+    fields = ["fullwidth＼name.txt", ~S(fullwidth\name.txt), "﹨", "e\u0301", "👩🏽‍💻", "🏳️‍🌈", "x\uFEFFy", "line\r\nbreak"]
+    script = "on run argv\nreturn my exmc_encode_rows({argv})\nend run\n" <> ScriptOutput.handlers()
+
+    assert {:ok, output} = OSAScriptAdapter.run_applescript(script, args: fields, timeout: 5000)
+    assert {:ok, [^fields]} = ScriptOutput.decode(output, length(fields))
+  end
+
+  @tag :integration
+  test "native encoder restores text item delimiters and preserves references" do
+    script =
+      ~S"""
+      set AppleScript's text item delimiters to {"original", "delimiters"}
+      set sampleField to "one" & tab & "two" & linefeed & "three" & return & "four\\"
+      set sampleRows to {{sampleField, "", "＼"}}
+      tell current application
+        set encodedRows to my exmc_encode_rows(sampleRows)
+      end tell
+      if AppleScript's text item delimiters is not {"original", "delimiters"} then error "Delimiters changed"
+      return encodedRows
+      """ <> ScriptOutput.handlers()
+
+    assert {:ok, output} = OSAScriptAdapter.run_applescript(script, timeout: 5000)
+    assert {:ok, [["one\ttwo\nthree\rfour\\", "", "＼"]]} = ScriptOutput.decode(output, 3)
+  end
+
+  @tag :integration
+  test "native encoder keeps repeated calls independent" do
+    script =
+      """
+      set firstOutput to my exmc_encode_rows({{"first"}})
+      set secondOutput to my exmc_encode_rows({{"second"}})
+      set emptyOutput to my exmc_encode_rows({})
+      return my exmc_encode_rows({{firstOutput, secondOutput, emptyOutput}})
+      """ <> ScriptOutput.handlers()
+
+    assert {:ok, output} = OSAScriptAdapter.run_applescript(script, timeout: 5000)
+
+    assert {:ok, [["EXMC1\nfirst\nEND", "EXMC1\nsecond\nEND", "EXMC1\nEND"]]} = ScriptOutput.decode(output, 3)
+  end
+
+  @tag :integration
+  test "native encoder round-trips large collections" do
+    script =
+      ~S"""
+      set outputRows to {}
+      repeat 1000 times
+        set end of outputRows to {"synthetic,|雪＼", "one" & linefeed & "two", "  tail  "}
+      end repeat
+      return my exmc_encode_rows(outputRows)
+      """ <> ScriptOutput.handlers()
+
+    assert {:ok, output} = OSAScriptAdapter.run_applescript(script, timeout: 10_000)
+    assert {:ok, rows} = ScriptOutput.decode(output, 3)
+    assert rows == List.duplicate(["synthetic,|雪＼", "one\ntwo", "  tail  "], 1000)
+  end
+
+  @tag :integration
   test "native AppleScript encoder handles empty collections and empty single fields" do
     for rows <- [[], [[""]], [["", ""]]] do
       literal = if rows == [], do: "{}", else: "{{#{Enum.map_join(hd(rows), ", ", fn _ -> ~s("") end)}}}"

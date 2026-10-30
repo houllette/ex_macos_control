@@ -12,39 +12,55 @@ defmodule ExMacOSControl.ScriptOutput do
   @spec handlers() :: String.t()
   def handlers do
     ~S"""
+    on exmc_join(parts, separator)
+      set previousDelimiters to AppleScript's text item delimiters
+      try
+        set AppleScript's text item delimiters to separator
+        set joinedText to parts as text
+        set AppleScript's text item delimiters to previousDelimiters
+        return joinedText
+      on error errMsg number errNum
+        set AppleScript's text item delimiters to previousDelimiters
+        error errMsg number errNum
+      end try
+    end exmc_join
+
     on exmc_encode_field(fieldValue)
       set fieldText to fieldValue as text
-      set encodedText to ""
+      set encodedParts to {}
       repeat with fieldCharacter in characters of fieldText
         set c to contents of fieldCharacter
-        if c is "\\" then
-          set encodedText to encodedText & "\\\\"
-        else if c is tab then
-          set encodedText to encodedText & "\\t"
-        else if c is linefeed then
-          set encodedText to encodedText & "\\n"
-        else if c is return then
-          set encodedText to encodedText & "\\r"
+        set characterID to id of c
+        if characterID is 92 then
+          set end of encodedParts to "\\\\"
+        else if characterID is 9 then
+          set end of encodedParts to "\\t"
+        else if characterID is 10 then
+          set end of encodedParts to "\\n"
+        else if characterID is 13 then
+          set end of encodedParts to "\\r"
         else
-          set encodedText to encodedText & c
+          set end of encodedParts to c
         end if
       end repeat
-      return encodedText
+      return my exmc_join(encodedParts, "")
     end exmc_encode_field
 
     on exmc_encode_rows(outputRows)
-      set encodedOutput to "EXMC1" & linefeed
-      repeat with outputRow in outputRows
-        set firstField to true
-        repeat with outputField in outputRow
-          if not firstField then set encodedOutput to encodedOutput & tab
+      script rowBuffer
+        property encodedRows : {}
+      end script
+      set rowBuffer's encodedRows to {"EXMC1"}
+      repeat with outputRow in (get outputRows)
+        set encodedFields to {}
+        repeat with outputField in (get contents of outputRow)
           set encodedField to my exmc_encode_field(contents of outputField)
-          set encodedOutput to encodedOutput & encodedField
-          set firstField to false
+          set end of encodedFields to encodedField
         end repeat
-        set encodedOutput to encodedOutput & linefeed
+        set end of rowBuffer's encodedRows to my exmc_join(encodedFields, tab)
       end repeat
-      return encodedOutput & "END"
+      set end of rowBuffer's encodedRows to "END"
+      return my exmc_join(rowBuffer's encodedRows, linefeed)
     end exmc_encode_rows
     """
   end

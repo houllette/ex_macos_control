@@ -85,22 +85,17 @@ defmodule ExMacOSControl.Permissions do
 
   ## How It Works
 
-  Reads System Events' `UI elements enabled` property without changing focus.
-  If it is false, or a permission error occurs, permission is not granted.
+  Queries `AXIsProcessTrusted()` in the osascript process that performs UI
+  automation. This checks the caller's grant without changing focus or prompting.
   """
   @spec check_accessibility() :: {:ok, :granted | :not_granted} | {:error, Error.t()}
   def check_accessibility do
     script = """
-    tell application "System Events"
-      if UI elements enabled then
-        return "granted"
-      else
-        return "not_granted"
-      end if
-    end tell
+    ObjC.import('ApplicationServices');
+    $.AXIsProcessTrusted() ? 'granted' : 'not_granted';
     """
 
-    case adapter().run_applescript(script) do
+    case adapter().run_javascript(script) do
       {:ok, "granted"} ->
         {:ok, :granted}
 

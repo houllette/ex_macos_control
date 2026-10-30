@@ -86,7 +86,7 @@ defmodule ExMacOSControl.SafariIntegrationTest do
     @tag :integration
     test "executes simple arithmetic JavaScript" do
       assert {:ok, result} = Safari.execute_javascript("2 + 2")
-      assert result == "4"
+      assert {4.0, ""} = Float.parse(result)
     end
 
     @tag :integration

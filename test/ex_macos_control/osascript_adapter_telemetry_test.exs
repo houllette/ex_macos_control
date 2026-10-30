@@ -5,7 +5,9 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
 
   # Telemetry handler module to avoid performance warnings
   def handle_telemetry_event(event, measurements, metadata, config) do
-    send(config.test_pid, {:telemetry, event, measurements, metadata})
+    if self() == config.test_pid do
+      send(config.test_pid, {:telemetry, event, measurements, metadata})
+    end
   end
 
   setup do
@@ -27,6 +29,18 @@ defmodule ExMacOSControl.OSAScriptAdapterTelemetryTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
     %{handler_id: handler_id}
+  end
+
+  test "ignores events from concurrent callers" do
+    event = [:ex_macos_control, :applescript, :start]
+
+    Task.async(fn -> :telemetry.execute(event, %{script_length: 5}, %{script: "other"}) end)
+    |> Task.await()
+
+    refute_received {:telemetry, _, _, _}
+
+    :telemetry.execute(event, %{script_length: 4}, %{script: "self"})
+    assert_received {:telemetry, ^event, %{script_length: 4}, %{script: "self"}}
   end
 
   describe "run_applescript/1 telemetry" do

@@ -542,13 +542,6 @@ Control the Messages app programmatically:
 # Explicit :sms / :imessage selection is unsupported and returns an error
 # without sending; only service: :auto (the default) is accepted.
 
-# Get recent messages from a chat
-{:ok, messages} = ExMacOSControl.Messages.get_recent_messages("+1234567890")
-# => {:ok, [
-#   %{from: "+1234567890", text: "Hello!", timestamp: "Monday, January 15, 2024 at 2:30:00 PM"},
-#   %{from: "+1234567890", text: "How are you?", timestamp: "Monday, January 15, 2024 at 2:31:00 PM"}
-# ]}
-
 # List all chats (unread counts are unavailable, not zero)
 {:ok, chats} = ExMacOSControl.Messages.list_chats()
 # => {:ok, [
@@ -563,13 +556,12 @@ Control the Messages app programmatically:
 
 **Required Permissions:**
 - Automation permission for Terminal/your app to control Messages
-- Full Disk Access (for reading message history)
 
 **Important Safety Notes**:
 - `send_message/2` and `send_message/3` send real messages immediately - there is no undo
 - Messages chooses the delivery service; SMS fallback is not guaranteed by this library
 - Explicit `:sms` or `:imessage` service requests return an error before sending
-- Message-history APIs require verification against your macOS version; Full Disk Access alone does not guarantee support
+- `get_recent_messages/1` returns an unsupported-functionality error; AppleScript does not expose message history
 - Be extremely careful when using in automated scripts
 - Consider adding confirmation prompts before sending messages
 - Test with your own phone number first
@@ -603,7 +595,6 @@ ExMacOSControl.Permissions.open_automation_preferences()
 **Required Permissions:**
 - **Accessibility**: For UI automation (menu items, keystrokes, windows)
 - **Automation**: For controlling specific apps (Safari, Finder, Mail, etc.)
-- **Full Disk Access**: For some operations (e.g., Messages history)
 
 ## Performance & Reliability
 

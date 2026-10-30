@@ -1,7 +1,7 @@
 defmodule ExMacOSControl.PermissionsIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias ExMacOSControl.{Permissions, TestHelpers}
+  alias ExMacOSControl.{OSAScriptAdapter, Permissions, TestHelpers}
 
   @moduletag :integration
 
@@ -29,6 +29,15 @@ defmodule ExMacOSControl.PermissionsIntegrationTest do
       result = Permissions.check_accessibility()
       assert {:ok, status} = result
       assert status in [:granted, :not_granted]
+    end
+
+    test "matches osascript's Accessibility trust without a UI action" do
+      script = "ObjC.import('ApplicationServices'); $.AXIsProcessTrusted();"
+      assert {:ok, trusted} = OSAScriptAdapter.run_javascript(script, timeout: 5000)
+      expected = if trusted == "true", do: :granted, else: :not_granted
+
+      assert trusted in ["true", "false"]
+      assert {:ok, ^expected} = Permissions.check_accessibility()
     end
 
     @tag :integration

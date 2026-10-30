@@ -38,38 +38,11 @@ defmodule ExMacOSControl.MessagesIntegrationTest do
   end
 
   describe "get_recent_messages/1" do
-    @tag :skip
-    test "retrieves messages from existing chat" do
-      # Replace with actual test phone number/contact
-      recipient = System.get_env("TEST_MESSAGES_RECIPIENT") || "+1234567890"
+    test "reports unsupported history instead of compiling an invalid script" do
+      assert {:error, %ExMacOSControl.Error{type: :execution_error, message: message}} =
+               Messages.get_recent_messages("nobody@example.invalid")
 
-      assert {:ok, messages} = Messages.get_recent_messages(recipient)
-      assert is_list(messages)
-
-      # If there are messages, verify structure
-      if messages != [] do
-        message = hd(messages)
-        assert Map.has_key?(message, :from)
-        assert Map.has_key?(message, :text)
-        assert Map.has_key?(message, :timestamp)
-        assert is_binary(message.from)
-        assert is_binary(message.text)
-        assert is_binary(message.timestamp)
-      end
-    end
-
-    @tag :skip
-    test "handles non-existent chat gracefully" do
-      # Try to get messages from a chat that likely doesn't exist
-      recipient = "nonexistent-recipient-#{System.unique_integer()}"
-
-      result = Messages.get_recent_messages(recipient)
-
-      # Should either return empty list or error
-      case result do
-        {:ok, messages} -> assert messages == []
-        {:error, error} -> assert error.type in [:not_found, :execution_error]
-      end
+      assert message =~ "history is not supported"
     end
   end
 

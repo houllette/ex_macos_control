@@ -2,8 +2,8 @@ defmodule ExMacOSControl.Messages do
   @moduledoc """
   Provides functions for automating the Messages application on macOS.
 
-  This module enables you to send iMessages and SMS, retrieve messages,
-  and list chats. Unread counts are not exposed by the AppleScript API.
+  This module enables you to send iMessages and SMS and list chats.
+  Message history and unread counts are not exposed by the AppleScript API.
 
   ## Safety Warning
 
@@ -38,13 +38,6 @@ defmodule ExMacOSControl.Messages do
       )
       # => :ok
 
-      # Get recent messages from a chat
-      {:ok, messages} = ExMacOSControl.Messages.get_recent_messages("+1234567890")
-      # => {:ok, [
-      #   %{from: "...", text: "...", timestamp: "..."},
-      #   ...
-      # ]}
-
       # List all chats
       {:ok, chats} = ExMacOSControl.Messages.list_chats()
       # => {:ok, [
@@ -74,7 +67,6 @@ defmodule ExMacOSControl.Messages do
 
   Messages automation requires:
   - **Automation permission** for Terminal/your app to control Messages
-  - **Full Disk Access** may be needed for reading message history
 
   You can grant these in System Preferences > Privacy & Security.
 
@@ -82,8 +74,8 @@ defmodule ExMacOSControl.Messages do
 
   - Only `service: :auto` is supported; explicit `:sms`/`:imessage` requests return an error before sending
   - `get_unread_count/0` returns an error, and chat `:unread` values are `nil` (unknown), not zero
-  - Message-history APIs vary by macOS version and require native validation
-  - Direct SQLite access is not implemented; Full Disk Access alone does not add AppleScript history support
+  - `get_recent_messages/1` returns an unsupported-functionality error without contacting Messages
+  - Direct SQLite access is not implemented; Full Disk Access does not add AppleScript history support
   """
 
   alias ExMacOSControl.{Error, ScriptOutput}
@@ -191,63 +183,15 @@ defmodule ExMacOSControl.Messages do
   end
 
   @doc """
-  Gets recent messages from a chat with the specified recipient.
+  Reports that message history is unsupported by the Messages AppleScript API.
 
-  Returns the most recent messages (typically last 10-20) from the conversation.
-
-  ## Parameters
-
-  - `recipient` - Phone number or contact name
-
-  ## Returns
-
-  - `{:ok, [message]}` - List of message maps with :from, :text, :timestamp
-  - `{:error, Error.t()}` on failure
-
-  ## Examples
-
-      get_recent_messages("+1234567890")
-      # => {:ok, [
-      #   %{
-      #     from: "+1234567890",
-      #     text: "Hello!",
-      #     timestamp: "2024-01-15 14:30:00"
-      #   },
-      #   ...
-      # ]}
-
-  ## Errors
-
-  - `:not_found` - Chat not found or Messages app not found
-  - `:execution_error` - Error retrieving messages
-  - `:permission_denied` - Full Disk Access may be required
+  Returns an execution error without contacting Messages. Full Disk Access does
+  not add history support to the scripting dictionary; direct database access is
+  not implemented.
   """
-  @spec get_recent_messages(String.t()) :: {:ok, [map()]} | {:error, Error.t()}
-  def get_recent_messages(recipient) do
-    script = """
-    tell application "Messages"
-      set targetChat to first chat whose participants contains "#{escape_quotes(recipient)}"
-      set recentMessages to last 20 messages of targetChat
-      set outputRows to {}
-
-      repeat with msg in recentMessages
-        set end of outputRows to {handle of msg, text of msg, (date of msg) as text}
-      end repeat
-
-      return my exmc_encode_rows(outputRows)
-    end tell
-    #{ScriptOutput.handlers()}
-    """
-
-    case adapter().run_applescript(script) do
-      {:ok, result} ->
-        with {:ok, rows} <- ScriptOutput.decode(result, 3) do
-          {:ok, Enum.map(rows, fn [from, text, timestamp] -> %{from: from, text: text, timestamp: timestamp} end)}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+  @spec get_recent_messages(String.t()) :: {:error, Error.t()}
+  def get_recent_messages(_recipient) do
+    {:error, Error.execution_error("Messages history is not supported by the AppleScript API")}
   end
 
   @doc """

@@ -220,125 +220,18 @@ defmodule ExMacOSControl.MessagesTest do
   end
 
   describe "get_recent_messages/1" do
-    test "retrieves messages from chat" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "Messages"
-        assert script =~ "+1234567890"
-        assert script =~ "chat"
-        assert script =~ "participants"
-        assert script =~ "messages"
+    test "reports unsupported history without contacting the adapter" do
+      assert {:error, %Error{type: :execution_error, message: message, details: %{}}} =
+               Messages.get_recent_messages("+1234567890")
 
-        {:ok,
-         script_output([
-           ["+1234567890", "Hello!", "Monday, January 15, 2024 at 2:30:00 PM"],
-           ["+1234567890", "How are you?", "Monday, January 15, 2024 at 2:31:00 PM"]
-         ])}
-      end)
-
-      assert {:ok, messages} = Messages.get_recent_messages("+1234567890")
-      assert length(messages) == 2
-
-      assert Enum.at(messages, 0) == %{
-               from: "+1234567890",
-               text: "Hello!",
-               timestamp: "Monday, January 15, 2024 at 2:30:00 PM"
-             }
-
-      assert Enum.at(messages, 1) == %{
-               from: "+1234567890",
-               text: "How are you?",
-               timestamp: "Monday, January 15, 2024 at 2:31:00 PM"
-             }
+      assert message =~ "history is not supported"
     end
 
-    test "preserves punctuation, multiline text, tabs and empty fields" do
-      text = "  Hello, Alice | Bob\nnext\tline\r\\n 雪  "
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "my exmc_encode_rows(outputRows)"
-        {:ok, script_output([["", text, "Monday, January 15, 2024"]])}
-      end)
-
-      assert {:ok, [%{from: "", text: ^text, timestamp: "Monday, January 15, 2024"}]} =
-               Messages.get_recent_messages("Alice")
-    end
-
-    test "returns a structured error for malformed message output" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script -> {:ok, "sender|private text"} end)
-      assert {:error, %Error{type: :execution_error}} = Messages.get_recent_messages("Alice")
-    end
-
-    test "handles empty message list" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, script_output([])}
-      end)
-
-      assert {:ok, []} = Messages.get_recent_messages("+1234567890")
-    end
-
-    test "escapes quotes in recipient" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn script ->
-        assert script =~ "\\\""
-        {:ok, script_output([])}
-      end)
-
-      assert {:ok, []} = Messages.get_recent_messages("John \"Johnny\" Doe")
-    end
-
-    test "handles chat not found error" do
-      error = Error.not_found("Chat not found")
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, error}
-      end)
-
-      assert {:error, ^error} = Messages.get_recent_messages("+1234567890")
-    end
-
-    test "handles Messages app error" do
-      error = Error.execution_error("Messages app error")
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, error}
-      end)
-
-      assert {:error, ^error} = Messages.get_recent_messages("+1234567890")
-    end
-
-    test "handles permission denied error" do
-      error = Error.permission_denied("Full Disk Access required")
-
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:error, error}
-      end)
-
-      assert {:error, ^error} = Messages.get_recent_messages("+1234567890")
-    end
-
-    test "parses single message correctly" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, script_output([["sender@example.com", "Test message", "Monday, January 15, 2024 at 3:00:00 PM"]])}
-      end)
-
-      assert {:ok, [message]} = Messages.get_recent_messages("sender@example.com")
-
-      assert message == %{
-               from: "sender@example.com",
-               text: "Test message",
-               timestamp: "Monday, January 15, 2024 at 3:00:00 PM"
-             }
-    end
-
-    test "preserves whitespace in parsed fields" do
-      expect(ExMacOSControl.AdapterMock, :run_applescript, fn _script ->
-        {:ok, script_output([["  sender@example.com  ", "  Test message  ", "  Monday, January 15, 2024  "]])}
-      end)
-
-      assert {:ok, [message]} = Messages.get_recent_messages("sender@example.com")
-
-      assert message.from == "  sender@example.com  "
-      assert message.text == "  Test message  "
-      assert message.timestamp == "  Monday, January 15, 2024  "
+    test "does not interpolate recipient content into a script" do
+      for recipient <- ["Alice", "John \"Johnny\" Doe", "line\nbreak\\path"] do
+        assert {:error, %Error{type: :execution_error, message: message}} = Messages.get_recent_messages(recipient)
+        refute message =~ recipient
+      end
     end
   end
 
