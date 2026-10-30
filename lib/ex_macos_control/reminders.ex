@@ -51,6 +51,19 @@ defmodule ExMacOSControl.Reminders do
   end
 
   def complete_reminder(id, opts \\ []), do: update_reminder(id, [completed: true], opts)
+  @doc "Creates a Reminder from captured text, retaining page URLs and selected text."
+  def create_from(list_id, capture, opts \\ []) do
+    with :ok <- Automation.options(opts, Keyword.keys(@schema) ++ [:timeout, :max_output_bytes]) do
+      attrs =
+        opts
+        |> Keyword.take(Keyword.keys(@schema))
+        |> Keyword.put_new(:title, ExMacOSControl.Capture.title(capture))
+        |> Keyword.put_new(:body, ExMacOSControl.Capture.render(capture, :reference))
+
+      create_reminder(list_id, attrs, Keyword.take(opts, [:timeout, :max_output_bytes]))
+    end
+  end
+
   def delete_reminder(id, opts \\ []), do: Resources.delete(@app, "app.reminders", id, %{}, opts)
 
   def create_list(name, opts \\ []) do

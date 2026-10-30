@@ -100,6 +100,12 @@ defmodule ExMacosControl.MixProject do
       ],
       groups_for_modules: [
         Compositions: [
+          ExMacOSControl.Capture,
+          ExMacOSControl.Capture.Page,
+          ExMacOSControl.Capture.Text,
+          ExMacOSControl.Capture.Files,
+          ExMacOSControl.Capture.Message,
+          ExMacOSControl.Capture.Event,
           ExMacOSControl.Composition,
           ExMacOSControl.Workflows,
           ExMacOSControl.Applications,

@@ -427,6 +427,8 @@ defmodule ExMacOSControl.Safari do
   defdelegate click_and_wait(page, selector, expected_selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
   @doc "Opens an owned page, waits for a CSS selector, extracts text and cleans up."
   defdelegate extract_text(url, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate capture(page, opts \\ []), to: ExMacOSControl.Capture, as: :page
+  defdelegate capture_current(opts \\ []), to: ExMacOSControl.Capture, as: :current_page
 
   defp tab_action(window_id, index, body, params, opts) do
     case tab_query(window_id, index, body <> "return true;", params, opts) do

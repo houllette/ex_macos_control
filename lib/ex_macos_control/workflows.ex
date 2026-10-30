@@ -15,6 +15,7 @@ defmodule ExMacOSControl.Workflows do
     Applications,
     Automation,
     Calendar,
+    Capture,
     Composition,
     Finder,
     ImageEvents,
@@ -282,8 +283,7 @@ defmodule ExMacOSControl.Workflows do
   end
 
   defp capture_page do
-    with {:ok, target} <- Composition.step(:current_page, &Safari.current_page/0),
-         do: Composition.step(:capture_page, fn -> Safari.snapshot(target) end)
+    Safari.capture_current()
   end
 
   defp send_page(chat_id) do
@@ -298,24 +298,18 @@ defmodule ExMacOSControl.Workflows do
     end
   end
 
-  defp page_body(page) do
-    content = if String.trim(page.selection) == "", do: page.text, else: page.selection
-    page.url <> "\n\n" <> content
-  end
-
   defp create_reminder(list_id, title, body, opts) do
     attrs = opts |> Keyword.take(@reminder) |> Keyword.put_new(:title, title) |> Keyword.put(:body, body)
     Composition.step(:create_reminder, fn -> Reminders.create_reminder(list_id, attrs) end)
   end
 
   defp read_message(account, mailbox, id),
-    do: Composition.step(:read_message, fn -> Mail.get_message(account, mailbox, id) end)
+    do: Composition.step(:read_message, fn -> Mail.capture_message(account, mailbox, id) end)
 
-  defp read_event(calendar, id), do: Composition.step(:read_event, fn -> Calendar.get_event(calendar, id) end)
-  defp message_body(message), do: "From: #{message.sender}\nSubject: #{message.subject}\n\n#{message.content}"
+  defp read_event(calendar, id), do: Composition.step(:read_event, fn -> Calendar.capture_event(calendar, id) end)
+  defp message_body(message), do: Capture.render(message)
 
-  defp event_body(event),
-    do: "#{event.start_at} – #{event.end_at}\n#{event.location}\n#{event.description}\n#{event.url}"
+  defp event_body(event), do: Capture.render(event)
 
   defp maybe_complete(id, opts) do
     if opts[:complete_reminder],
@@ -334,11 +328,7 @@ defmodule ExMacOSControl.Workflows do
   defp do_current_page_to_note(opts) do
     with {:ok, page} <- capture_page() do
       Composition.step(:create_note, fn ->
-        Notes.create_text_note(
-          Keyword.get(opts, :title, page.title),
-          page_body(page),
-          Keyword.take(opts, [:folder_id])
-        )
+        Notes.create_from(page, Keyword.take(opts, [:folder_id, :title]))
       end)
     end
   end
