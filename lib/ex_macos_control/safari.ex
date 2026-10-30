@@ -402,6 +402,32 @@ defmodule ExMacOSControl.Safari do
   def list_tabs(opts), do: ExMacOSControl.with_options(opts, &list_tabs/0)
   def close_tab(index, opts), do: ExMacOSControl.with_options(opts, fn -> close_tab(index) end)
 
+  @doc "Opens a dedicated window and returns an owned Page reference without waiting for load."
+  defdelegate open_page(url, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Closes an owned page. Additional tabs cause an error instead of being closed."
+  defdelegate close_page(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Opens, waits for load, runs a tagged-result callback and closes the owned window, including on failure."
+  defdelegate with_page(url, opts \\ [], fun), to: ExMacOSControl.Safari.Compositions
+  @doc "Returns the current window/tab target once, without assuming it remains frontmost."
+  defdelegate current_page(opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Captures title, URL, visible text and selected text from a targeted page. Requires JavaScript from Apple Events."
+  defdelegate snapshot(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate wait_for_ready(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate wait_for_selector(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Navigates once and polls for completion of the new document or same-document location change."
+  defdelegate navigate_and_wait(page, url, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate text(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate attribute(page, selector, attribute, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate extract(page, selectors, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Waits for a field, sets its native value, dispatches input/change events and verifies the value."
+  defdelegate fill(page, selector, value, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate fill_fields(page, fields, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate click(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate click_and_wait(page, selector, expected_selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Opens an owned page, waits for a CSS selector, extracts text and cleans up."
+  defdelegate extract_text(url, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
   defp tab_action(window_id, index, body, params, opts) do
     case tab_query(window_id, index, body <> "return true;", params, opts) do
       {:ok, true} -> :ok

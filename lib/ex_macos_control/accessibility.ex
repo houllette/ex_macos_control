@@ -6,7 +6,7 @@ defmodule ExMacOSControl.Accessibility do
   role, subrole, identifier, title and optional 1-based index. Ambiguous selectors
   are rejected. Key delivery first activates and verifies the target process.
   """
-  alias ExMacOSControl.{Automation, Wait}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Wait}
   @app "com.apple.systemevents"
 
   def tree(process, opts \\ []) do
@@ -132,6 +132,134 @@ defmodule ExMacOSControl.Accessibility do
     end
   end
 
+  @doc "Waits for a specific attribute value without repeating an action."
+  def wait_for_attribute(process, selectors, attribute, value, opts \\ []) do
+    with :ok <- path(selectors),
+         :ok <- Automation.required_string(attribute, "Attribute name"),
+         :ok <- composition_options(opts) do
+      wait_state(
+        process,
+        selectors,
+        "var o=resolve(true);return o!==null && attr(o,input.attribute)===input.value;",
+        %{attribute: attribute, value: value},
+        opts
+      )
+    end
+  end
+
+  @doc "Waits until a target element disappears. Missing processes remain errors."
+  def wait_until_gone(process, selectors, opts \\ []) do
+    with :ok <- path(selectors), :ok <- composition_options(opts) do
+      wait_state(process, selectors, "return resolve(true)===null;", %{}, opts)
+    end
+  end
+
+  @doc "Waits for an editable AXValue, sets it once and verifies the resulting text."
+  def fill(process, selectors, value, opts \\ []) do
+    with :ok <- path(selectors),
+         true <- is_binary(value),
+         :ok <- composition_options(opts) do
+      Desktop.with_lock(
+        fn -> do_fill(process, selectors, value, opts) end,
+        execution_opts(opts)
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Field value must be text")
+    end
+  end
+
+  @doc "Fills a non-empty list of {selector_path, text} pairs in order, stopping on failure."
+  def fill_fields(process, fields, opts \\ []) do
+    with :ok <- Composition.validate_items(fields),
+         :ok <- validate_fields(fields),
+         :ok <- composition_options(opts) do
+      Desktop.with_lock(
+        fn -> do_fill_fields(process, fields, opts) end,
+        execution_opts(opts)
+      )
+    end
+  end
+
+  @doc "Sets a checkbox to a desired boolean state, clicking at most once, then verifies AXValue."
+  def set_checked(process, selectors, checked, opts \\ []) do
+    with :ok <- path(selectors),
+         true <- is_boolean(checked),
+         :ok <- composition_options(opts) do
+      Desktop.with_lock(
+        fn -> do_set_checked(process, selectors, checked, opts) end,
+        execution_opts(opts)
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Checked state must be a boolean")
+    end
+  end
+
+  @doc "Waits until enabled, clicks once, and waits for an expected element to appear."
+  def click_and_wait(process, selectors, expected, opts \\ []) do
+    with :ok <- path(selectors), :ok <- path(expected), :ok <- composition_options(opts) do
+      Desktop.with_lock(
+        fn -> do_click_and_wait(process, selectors, expected, opts) end,
+        execution_opts(opts)
+      )
+    end
+  end
+
+  defp toggle_if_needed(_process, _selectors, value, checked) when value == checked, do: :ok
+  defp toggle_if_needed(_process, _selectors, 1, true), do: :ok
+  defp toggle_if_needed(_process, _selectors, 0, false), do: :ok
+
+  defp toggle_if_needed(process, selectors, _value, _checked),
+    do: Composition.step(:toggle_checkbox, fn -> click(process, selectors) end)
+
+  defp actionable(process, selectors, opts),
+    do:
+      wait_state(
+        process,
+        selectors,
+        "var o=resolve(true);return o!==null && attr(o,'AXEnabled')!==false && o.actions.byName('AXPress').exists();",
+        %{},
+        opts
+      )
+
+  defp wait_state(process, selectors, body, params, opts) do
+    Composition.step(:wait_for_element_state, fn ->
+      Wait.until(
+        fn remaining ->
+          query(process, selectors, body, params, Keyword.put(execution_opts(opts), :timeout, remaining))
+        end,
+        Keyword.take(opts, [:timeout, :interval])
+      )
+    end)
+  end
+
+  defp validate_fields(fields) do
+    Enum.reduce_while(fields, :ok, fn
+      {selectors, value}, :ok when is_binary(value) ->
+        case path(selectors) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+
+      _, :ok ->
+        {:halt, Automation.invalid("Fields must contain {selector_path, text} pairs")}
+    end)
+  end
+
+  defp composition_options(opts) do
+    with :ok <- Automation.options(opts, [:timeout, :interval, :max_output_bytes]),
+         true <- is_integer(Keyword.get(opts, :interval, 50)) and Keyword.get(opts, :interval, 50) > 0 do
+      :ok
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Interval must be a positive integer")
+    end
+  end
+
+  defp execution_opts(opts), do: Keyword.take(opts, [:timeout, :max_output_bytes])
+  defp wait_opts(opts), do: Keyword.take(opts, [:interval])
+
   defp path(selectors) do
     valid =
       is_list(selectors) and length(selectors) <= 20 and
@@ -201,5 +329,40 @@ defmodule ExMacOSControl.Accessibility do
       if(!active())throw new Error('Target process did not become frontmost');
     }
     """
+  end
+
+  defp do_fill(process, selectors, value, opts) do
+    with :ok <-
+           wait_state(
+             process,
+             selectors,
+             "var o=resolve(true);if(!o)return false;var a=o.attributes.byName('AXValue');return attr(o,'AXEnabled')!==false && a.exists() && a.settable();",
+             %{},
+             wait_opts(opts)
+           ),
+         :ok <- Composition.step(:fill_field, fn -> set_attribute(process, selectors, "AXValue", value) end) do
+      wait_for_attribute(process, selectors, "AXValue", value, wait_opts(opts))
+    end
+  end
+
+  defp do_fill_fields(process, fields, opts) do
+    Composition.map(fields, :fill_field, fn {selectors, value} ->
+      fill(process, selectors, value, wait_opts(opts))
+    end)
+  end
+
+  defp do_set_checked(process, selectors, checked, opts) do
+    with :ok <- actionable(process, selectors, wait_opts(opts)),
+         {:ok, value} <- Composition.step(:checkbox_state, fn -> get_attribute(process, selectors, "AXValue") end),
+         :ok <- toggle_if_needed(process, selectors, value, checked) do
+      wait_for_attribute(process, selectors, "AXValue", if(checked, do: 1, else: 0), wait_opts(opts))
+    end
+  end
+
+  defp do_click_and_wait(process, selectors, expected, opts) do
+    with :ok <- actionable(process, selectors, wait_opts(opts)),
+         :ok <- Composition.step(:click_element, fn -> click(process, selectors) end) do
+      Composition.step(:wait_for_result, fn -> wait_for(process, expected, wait_opts(opts)) end)
+    end
   end
 end

@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Photos do
   @moduledoc "Photos albums, folders, media metadata, import/export and slideshow controls. Media is addressed by Photos IDs."
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
   @app "com.apple.Photos"
   @fields [
     id: "o.id()",
@@ -138,6 +138,27 @@ defmodule ExMacOSControl.Photos do
 
   def slideshow_running?(opts \\ []), do: Automation.query(@app, "return app.slideshowRunning();", %{}, opts)
 
+  @doc """
+  Creates a new album and imports files into it. Returns album_id and media_ids.
+  Validates input files and options before creating the album. The album remains
+  available for recovery if importing fails; an uncertain import is not retried.
+  """
+  def import_into_new_album(paths, name, opts \\ []) do
+    with :ok <- Automation.required_string(name, "Album name"),
+         :ok <- Composition.validate_items(paths),
+         true <- Enum.all?(paths, &(is_binary(&1) and File.regular?(&1))),
+         :ok <- Automation.options(opts, [:folder_id, :skip_duplicates, :timeout, :max_output_bytes]),
+         true <- is_boolean(Keyword.get(opts, :skip_duplicates, true)) do
+      Composition.run(
+        fn -> do_import_into_new_album(paths, name, opts) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Import needs existing files and boolean skip_duplicates")
+    end
+  end
+
   for {name, command} <- [
         stop_slideshow: "stopSlideshow",
         pause_slideshow: "pauseSlideshow",
@@ -170,5 +191,16 @@ defmodule ExMacOSControl.Photos do
     if is_list(values) and values != [] and Enum.all?(values, &(is_binary(&1) and &1 != "")),
       do: :ok,
       else: Automation.invalid("Media IDs must be a non-empty list of strings")
+  end
+
+  defp do_import_into_new_album(paths, name, opts) do
+    with {:ok, album} <-
+           Composition.step(:create_album, fn -> create_album(name, Keyword.take(opts, [:folder_id])) end),
+         {:ok, media} <-
+           Composition.step(:import_files, fn ->
+             import_files(paths, Keyword.merge(Keyword.take(opts, [:skip_duplicates]), album_id: album))
+           end) do
+      {:ok, %{album_id: album, media_ids: media}}
+    end
   end
 end

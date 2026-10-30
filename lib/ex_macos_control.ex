@@ -76,10 +76,12 @@ defmodule ExMacOSControl do
   """
   @spec run_applescript(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
   def run_applescript(script) do
-    case Process.get({__MODULE__, :options}, []) do
-      [] -> adapter().run_applescript(script)
-      opts -> adapter().run_applescript(script, opts)
-    end
+    ExMacOSControl.Composition.guard(fn ->
+      case execution_options() do
+        [] -> adapter().run_applescript(script)
+        opts -> adapter().run_applescript(script, opts)
+      end
+    end)
   end
 
   @doc """
@@ -125,7 +127,7 @@ defmodule ExMacOSControl do
   @spec run_applescript(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, term()} | {:error, ExMacOSControl.Error.t()}
   def run_applescript(script, opts),
-    do: adapter().run_applescript(script, execution_options(opts))
+    do: ExMacOSControl.Composition.guard(fn -> adapter().run_applescript(script, execution_options(opts)) end)
 
   @doc """
   Executes JavaScript for Automation (JXA) code.
@@ -150,10 +152,12 @@ defmodule ExMacOSControl do
   """
   @spec run_javascript(String.t()) :: {:ok, String.t()} | {:error, term()}
   def run_javascript(script) do
-    case execution_options() do
-      [] -> adapter().run_javascript(script)
-      opts -> adapter().run_javascript(script, opts)
-    end
+    ExMacOSControl.Composition.guard(fn ->
+      case execution_options() do
+        [] -> adapter().run_javascript(script)
+        opts -> adapter().run_javascript(script, opts)
+      end
+    end)
   end
 
   @doc """
@@ -186,7 +190,7 @@ defmodule ExMacOSControl do
   @spec run_javascript(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, term()} | {:error, term()}
   def run_javascript(script, opts),
-    do: adapter().run_javascript(script, execution_options(opts))
+    do: ExMacOSControl.Composition.guard(fn -> adapter().run_javascript(script, execution_options(opts)) end)
 
   @doc """
   Executes a script file from disk with automatic language detection.
@@ -224,7 +228,7 @@ defmodule ExMacOSControl do
 
   """
   @spec run_script_file(String.t()) :: {:ok, String.t()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path), do: adapter().run_script_file(file_path, execution_options())
+  def run_script_file(file_path), do: run_script_file(file_path, [])
 
   @doc """
   Executes a script file from disk with options.
@@ -285,7 +289,8 @@ defmodule ExMacOSControl do
   """
   @spec run_script_file(String.t(), ExMacOSControl.Adapter.options()) ::
           {:ok, term()} | {:error, ExMacOSControl.Error.t()}
-  def run_script_file(file_path, opts), do: adapter().run_script_file(file_path, execution_options(opts))
+  def run_script_file(file_path, opts),
+    do: ExMacOSControl.Composition.guard(fn -> adapter().run_script_file(file_path, execution_options(opts)) end)
 
   @doc """
   Executes a macOS Shortcut by name.
@@ -311,10 +316,12 @@ defmodule ExMacOSControl do
   """
   @spec run_shortcut(String.t()) :: :ok | {:ok, String.t()} | {:error, term()}
   def run_shortcut(name) do
-    case execution_options() do
-      [] -> adapter().run_shortcut(name)
-      opts -> adapter().run_shortcut(name, opts)
-    end
+    ExMacOSControl.Composition.guard(fn ->
+      case execution_options() do
+        [] -> adapter().run_shortcut(name)
+        opts -> adapter().run_shortcut(name, opts)
+      end
+    end)
   end
 
   @doc """
@@ -353,7 +360,8 @@ defmodule ExMacOSControl do
   """
   @spec run_shortcut(String.t(), ExMacOSControl.Adapter.options()) ::
           :ok | {:ok, String.t()} | {:error, term()}
-  def run_shortcut(name, opts), do: adapter().run_shortcut(name, execution_options(opts))
+  def run_shortcut(name, opts),
+    do: ExMacOSControl.Composition.guard(fn -> adapter().run_shortcut(name, execution_options(opts)) end)
 
   @doc """
   Lists all available macOS Shortcuts.
@@ -398,5 +406,6 @@ defmodule ExMacOSControl do
   end
 
   @doc false
-  def execution_options(opts \\ []), do: Keyword.merge(Process.get({__MODULE__, :options}, []), opts)
+  def execution_options(opts \\ []),
+    do: Process.get({__MODULE__, :options}, []) |> Keyword.merge(opts) |> ExMacOSControl.Composition.cap_options()
 end

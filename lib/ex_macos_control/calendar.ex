@@ -1,6 +1,6 @@
 defmodule ExMacOSControl.Calendar do
   @moduledoc "Calendar discovery and events scoped by calendar ID, with timezone-aware dates and recurrence text."
-  alias ExMacOSControl.{Automation, Resources}
+  alias ExMacOSControl.{Automation, Composition, Resources}
   @app "com.apple.iCal"
   @collection "byId(app.calendars, input.calendar_id).events"
   @schema [
@@ -248,6 +248,30 @@ defmodule ExMacOSControl.Calendar do
   def switch_view(view, opts \\ []) when view in [:day, :week, :month],
     do: Automation.action(@app, "app.switchView({to:input.view});", %{view: to_string(view) <> " view"}, opts)
 
+  @doc """
+  Creates an event followed by alarms supplied as `{type, attributes}` pairs.
+  Alarm inputs are validated before event creation. Returns event_id and alarm
+  indices; a partial failure retains the event ID and completed alarms.
+  """
+  def create_event_with_alarms(calendar_id, attrs, alarms, opts \\ []) do
+    with true <- is_list(alarms) and length(alarms) <= 1000,
+         :ok <- Composition.validate_all(alarms, &validate_alarm/1) do
+      Composition.run(
+        fn -> do_create_event_with_alarms(calendar_id, attrs, alarms) end,
+        opts
+      )
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Alarms must be a list of at most 1000 {type, attributes} pairs")
+    end
+  end
+
+  defp validate_alarm({type, attrs}) do
+    with {:ok, _} <- alarm_type(type), {:ok, _, _} <- alarm_properties(type, attrs), do: :ok
+  end
+
+  defp validate_alarm(_), do: Automation.invalid("Alarms must contain {type, attributes} pairs")
+
   defp alarm_type(type) do
     case Map.fetch(@alarm_types, type) do
       {:ok, spec} -> {:ok, spec}
@@ -271,5 +295,15 @@ defmodule ExMacOSControl.Calendar do
     {:ok, start_date, _} = DateTime.from_iso8601(start_at)
     {:ok, end_date, _} = DateTime.from_iso8601(end_at)
     DateTime.compare(start_date, end_date) == :lt
+  end
+
+  defp do_create_event_with_alarms(calendar_id, attrs, alarms) do
+    with {:ok, id} <- Composition.step(:create_event, fn -> create_event(calendar_id, attrs) end),
+         {:ok, indices} <-
+           Composition.map(alarms, :create_alarm, fn {type, attributes} ->
+             create_alarm(calendar_id, id, type, attributes)
+           end) do
+      {:ok, %{event_id: id, alarms: indices}}
+    end
   end
 end

@@ -99,6 +99,13 @@ defmodule ExMacosControl.MixProject do
         Reference: ~r/docs\/(performance|creating_app_modules).*/
       ],
       groups_for_modules: [
+        Compositions: [
+          ExMacOSControl.Composition,
+          ExMacOSControl.Workflows,
+          ExMacOSControl.Applications,
+          ExMacOSControl.Desktop,
+          ExMacOSControl.Safari.Page
+        ],
         Core: [
           ExMacOSControl,
           ExMacOSControl.Adapter,

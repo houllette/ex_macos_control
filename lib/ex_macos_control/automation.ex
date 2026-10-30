@@ -11,7 +11,7 @@ defmodule ExMacOSControl.Automation do
            note vcard subject sender received_at read flagged junk content message_id attachments
            window_id tab_index source text path filename width height size favorite keywords date
            duration position volume muted playing artist album rating tracks persistent_id street city postal_code country country_code scripts trigger_minutes trigger_at essential_properties start_time frame_duration timecode_format
-           accepts_input action_count subtitle folder enabled service_type handle participants
+           accepts_input action_count subtitle folder enabled service_type handle participants pid running selection ready_state
            role subrole identifier value attributes actions children truncated bounds busy bundle_id version build dictionary scriptable index label button state current_track unread group_id capacity free_space dimensions resolution color_space bit_depth file_type input_volume alert_volume)a
   @key_map Map.new(@keys, &{Atom.to_string(&1), &1})
 
