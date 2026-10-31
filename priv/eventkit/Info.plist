@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>org.exmacoscontrol.eventkit</string>
+<key>CFBundleName</key><string>ExMacOSControl EventKit</string>
+<key>CFBundleExecutable</key><string>EventKitBridge</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Read and verify Calendar operations explicitly requested through ExMacOSControl.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Read and verify Reminders operations explicitly requested through ExMacOSControl.</string>
+<key>NSCalendarsUsageDescription</key><string>Read and verify requested Calendar operations.</string>
+<key>NSRemindersUsageDescription</key><string>Read and verify requested Reminders operations.</string>
+</dict></plist>
