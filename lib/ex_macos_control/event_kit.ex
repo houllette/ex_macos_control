@@ -6,6 +6,10 @@ defmodule ExMacOSControl.EventKit do
 
   status/1 never prompts. authorize/2 explicitly requests full access for one
   entity. Operations never switch backends or replay a failed mutation.
+
+  The helper targets macOS 14 or later and needs Apple's Swift toolchain to build.
+  See the [EventKit guide](eventkit.html) for installation, consent, native
+  references and the supported Calendar/Reminders field sets.
   """
   alias ExMacOSControl.{Automation, Command, Composition, Error}
   alias ExMacOSControl.EventKit.{Installer, Reference}
@@ -19,9 +23,13 @@ defmodule ExMacOSControl.EventKit do
   }
   @fields ~w(title body completed priority name source_id writable start_at end_at all_day time_zone recurrence recurrence_rule detached location url)a
 
+  @doc "Builds and ad-hoc signs a helper at a new .app destination. Requires macOS 14+ and Apple's Swift tools; defaults to a 120-second budget."
   defdelegate install(destination, opts \\ []), to: Installer
+
+  @doc "Reads native helper permission status without requesting consent. Requires helper: or configured :eventkit_helper."
   def status(opts \\ []), do: request("status", %{}, opts)
 
+  @doc "Explicitly requests full EventKit access for :event or :reminder. May display a macOS consent prompt."
   def authorize(entity, opts \\ [])
 
   def authorize(entity, opts) when entity in [:event, :reminder],
@@ -29,6 +37,7 @@ defmodule ExMacOSControl.EventKit do
 
   def authorize(_, _), do: invalid("Entity must be :event or :reminder")
 
+  @doc "Lists native account sources for :event or :reminder. Returns helper-defined source records with string keys."
   def sources(entity, opts \\ [])
 
   def sources(entity, opts) when entity in [:event, :reminder],

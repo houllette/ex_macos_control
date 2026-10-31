@@ -413,19 +413,37 @@ defmodule ExMacOSControl.Safari do
 
   @doc "Captures title, URL, visible text and selected text from a targeted page. Requires JavaScript from Apple Events."
   defdelegate snapshot(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Polls a targeted page until its document is complete. Options include timeout, max_output_bytes and interval."
   defdelegate wait_for_ready(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Waits for a CSS selector in a targeted page. Returns :ok or a structured error; does not click or mutate."
   defdelegate wait_for_selector(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
-  @doc "Navigates once and polls for completion of the new document or same-document location change."
+
+  @doc "Returns a page handle pinned to its current URL and document token. Navigation and same-URL reloads invalidate it."
   defdelegate pin_document(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Navigates deliberately, waits for completion, and returns a newly pinned Page handle. Retain the returned handle."
   defdelegate navigate_page(page, url, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Navigates once and waits for the new document or same-document location change. Returns :ok; does not refresh an old pinned handle."
   defdelegate navigate_and_wait(page, url, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  @doc "Reads textContent from one unambiguous CSS selector in a targeted page. Returns {:ok, text}."
   defdelegate text(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Reads an attribute from one unambiguous CSS selector. Returns {:ok, value}, including nil for an absent attribute."
   defdelegate attribute(page, selector, attribute, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Extracts the first match for each named selector. Accepts a non-empty string-keyed map and returns a string-keyed text map."
   defdelegate extract(page, selectors, opts \\ []), to: ExMacOSControl.Safari.Compositions
   @doc "Waits for a field, sets its native value, dispatches input/change events and verifies the value."
   defdelegate fill(page, selector, value, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Fills {selector, text} pairs sequentially under one deadline. Returns {:ok, results}; earlier changes persist on failure."
   defdelegate fill_fields(page, fields, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Waits for one enabled, unambiguous element and clicks once. Acknowledgement does not verify the resulting app/server state."
   defdelegate click(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
+
+  @doc "Clicks once, then waits for the expected selector. Do not reuse a pinned handle when the click intentionally replaces its document."
   defdelegate click_and_wait(page, selector, expected_selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
   @doc "Opens an owned page, waits for a CSS selector, extracts text and cleans up."
   defdelegate extract_text(url, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions

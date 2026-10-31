@@ -19,7 +19,7 @@ defmodule ExMacOSControl.Platform do
       # Check if running on macOS
       if ExMacOSControl.Platform.macos?() do
         # Safe to use macOS-specific features
-        ExMacOSControl.run_applescript("return 'Hello'")
+        ExMacOSControl.run_applescript(~s(return "Hello"), timeout: 5000)
       end
 
   ### Validation with Error Handling

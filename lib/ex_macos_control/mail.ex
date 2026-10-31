@@ -2,8 +2,16 @@ defmodule ExMacOSControl.Mail do
   @moduledoc """
   Automation helpers for macOS Mail app.
 
-  Provides functions to send emails, check unread counts, and search mailboxes
-  programmatically using AppleScript.
+  Provides AppleScript/JXA operations for accounts, mailboxes, paged message
+  searches, content/flags, attachments, sends and drafts. Capture helpers preserve
+  a source snapshot for handoff to other apps.
+
+  `create_draft/1` returns a transient outgoing compose ID.
+  `create_verified_draft/1` observes a newly saved Drafts-mailbox message and
+  returns an `ExMacOSControl.Mail.Draft` reference for reads or deliberate cleanup.
+  Its attachment verification compares names and sizes, not stored byte hashes.
+  See [Common patterns](common_patterns.html#prepare-a-mail-draft-and-keep-its-identity)
+  and [Using built-in workflows](workflows.html) for draft examples.
 
   ## Requirements
 
@@ -36,10 +44,14 @@ defmodule ExMacOSControl.Mail do
 
   ## Notes
 
-  - `send_email/1` sends emails immediately - there is no "draft" mode
+  - `send_email/1` dispatches a real send; use the separate draft helpers to prepare a message
   - Email addresses are validated with basic checks only
-  - Search is case-insensitive and searches subject lines
+  - Legacy `search_mailbox/2` searches subject lines; `search_messages/3` exposes scoped filters and paging
   - All functions require Mail.app to be accessible
+
+  A successful send acknowledges the command, not recipient delivery. Timeout or
+  verification failure can follow a real app change. Writes are never retried
+  automatically; inspect saved state and completed results before repeating one.
 
   ## Safety
 
@@ -447,6 +459,8 @@ defmodule ExMacOSControl.Mail do
   defdelegate capture_message(account, mailbox, id, opts \\ []), to: ExMacOSControl.Capture, as: :message
   @doc "Creates once, then verifies a newly saved message and returns a durable Draft reference. Never sends."
   defdelegate create_verified_draft(opts), to: ExMacOSControl.Mail.Compositions, as: :create
+
+  @doc "Reads a saved Draft reference after checking its captured subject and optional message ID. Returns id, subject, content and attachments."
   defdelegate get_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :get
 
   @doc "Deletes a saved draft and its process-bound compose object after checking their captured identities; verifies absence without replaying deletion."

@@ -427,7 +427,11 @@ defmodule ExMacOSControl.Finder do
   defdelegate with_selection(fun, opts \\ []), to: ExMacOSControl.Finder.Compositions
   @doc "Maps the captured selection sequentially, reporting completed results on failure."
   defdelegate map_selection(fun, opts \\ []), to: ExMacOSControl.Finder.Compositions
+
+  @doc "Captures the selection once and copies it to an existing directory after checking collisions. Returns resulting paths."
   defdelegate copy_selection(destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
+
+  @doc "Captures the selection once and moves it to an existing directory. Stops on error; completed moves remain in error details."
   defdelegate move_selection(destination, opts \\ []), to: ExMacOSControl.Finder.Compositions
   @doc "Copies a batch after checking every destination for collisions; returns resulting paths."
   defdelegate copy_files(paths, destination, opts \\ []), to: ExMacOSControl.Finder.Compositions

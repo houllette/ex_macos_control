@@ -15,8 +15,16 @@ defmodule ExMacOSControl.Permissions do
   ### Automation Permission
   Required for controlling specific applications via AppleScript/JXA
 
-  ### Full Disk Access
-  Required for some operations (e.g., reading Messages database)
+  ### Other Privacy Permissions
+  Individual operations can require additional privacy access. This module does
+  not inspect or grant Full Disk Access, and the library does not read the
+  Messages database. Optional EventKit access is managed separately through
+  `ExMacOSControl.EventKit`.
+
+  `preflight_automation/2` checks without prompting or launching the target.
+  `request_automation/2` explicitly permits a consent prompt. The legacy
+  `check_automation/1` sends a real Apple event and can launch or prompt.
+  No helper grants permissions on the user's behalf.
 
   ## Examples
 

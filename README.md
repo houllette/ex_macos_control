@@ -1,849 +1,165 @@
 # ExMacOSControl
 
-**Control your Mac with Elixir**
-
 [![hex.pm version](https://img.shields.io/hexpm/v/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
-[![hex.pm downloads](https://img.shields.io/hexpm/dt/ex_macos_control.svg)](https://hex.pm/packages/ex_macos_control)
-[![hex.pm license](https://img.shields.io/hexpm/l/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/blob/main/LICENSE)
-[![Last Updated](https://img.shields.io/github/last-commit/houllette/ex_macos_control.svg)](https://github.com/houllette/ex_macos_control/commits/master)
+[![hex.pm license](https://img.shields.io/hexpm/l/ex_macos_control.svg)](LICENSE)
 
-An Elixir library for macOS automation via AppleScript and JavaScript for Automation (JXA). Automate Safari, Finder, Mail, Messages, and more—all with the safety and reliability of Elixir.
+Control macOS applications from Elixir through AppleScript, JavaScript for
+Automation (JXA), native command-line tools, and an optional EventKit helper.
 
-## Why ExMacOSControl?
+Use app modules for individual operations, ready-made workflows for common
+handoffs, or ordinary Elixir functions to compose your own automation. The library
+provides shared deadlines, structured errors, scoped resources, and optional
+execution journals. It runs on your Mac and uses the applications and accounts
+available to the process running Elixir.
 
-- **🎯 Type-Safe Automation**: Leverage Elixir's type system and pattern matching for robust automation
-- **🧪 Test-Friendly**: Built-in adapter pattern with Mox support makes testing automation code straightforward
-- **⚡ Execution Controls**: Deadlines, bounded output, telemetry integration, and structured errors
-- **📦 Batteries Included**: Pre-built modules for Safari, Finder, Mail, Messages, and system control
-- **🔒 Permission Management**: Built-in helpers for checking and requesting macOS permissions
-- **🛠️ Extensible**: Clean patterns and guides for adding your own app modules
+## Install
 
-## Use Cases
-
-- **Developer Tooling**: Automate your Mac-based development workflow
-- **Testing & QA**: Control Safari for browser testing, automate UI interactions
-- **System Administration**: Manage processes, files, and system settings programmatically
-- **Communication Bots**: Send automated emails and messages
-- **Data Collection**: Extract data from running applications
-- **Productivity Automation**: Build custom workflows combining multiple apps
-
-## Quick Example
-
-Here's a complete workflow combining multiple features:
+Add the dependency to your project's `mix.exs`, then run `mix deps.get`:
 
 ```elixir
-alias ExMacOSControl, as: Mac
-alias ExMacOSControl.{Safari, Mail, Retry, Permissions}
-
-# Check permissions before starting
-case Permissions.check_automation("Safari") do
-  {:ok, :granted} -> :ok
-  {:ok, :not_granted} ->
-    Permissions.show_automation_help("Safari")
-    raise "Safari automation permission required"
-  {:error, error} ->
-    raise error.message
-end
-
-# Scrape data from a website with automatic retry
-{:ok, price} = Retry.with_retry(fn ->
-  # Open URL
-  :ok = Safari.open_url("https://example.com/product")
-  Process.sleep(2000)  # Wait for page load
-
-  # Extract price via JavaScript
-  Safari.execute_javascript(~s|
-    document.querySelector('.price').textContent
-  |)
-end, max_attempts: 3, backoff: :exponential)
-
-# Send email notification if price dropped
-if String.contains?(price, "$99") do
-  :ok = Mail.send_email(
-    to: "me@example.com",
-    subject: "Price Alert!",
-    body: "The product is now #{price}!"
-  )
-
-  IO.puts("✅ Alert sent!")
+defp deps do
+  [{:ex_macos_control, "~> 0.3.0"}]
 end
 ```
 
-## Features
-
-### Core Features
-- **AppleScript Execution**: Timeout support, argument passing, comprehensive error handling
-- **JavaScript for Automation (JXA)**: Full JXA support with ObjC bridge access
-- **Script File Execution**: Text scripts, compiled `.scpt` files and native `.scptd` bundles, plus compile/decompile/validation tools
-- **macOS Shortcuts**: Run/list through the facade; `ExMacOSControl.Shortcuts` adds identifiers, folders, file input/output, output types, and versioned workflow envelopes
-
-### App Modules
-- **System Events**: Process/window management, bounded accessibility trees, attributes/actions, nested menus, key codes, waits, and Finder integration
-- **Safari**: Address windows/tabs, inspect text/source, execute JavaScript, navigate/wait, and add Reading List entries
-- **Finder**: Window targeting, selections, copy/move/rename, folders, metadata, volumes and view modes
-- **Mail**: Sends/drafts, sender/recipients/attachments, account/mailbox targeting, paged searches, message contents and flags
-- **Messages**: Text/file sends, chat IDs, account/participant discovery, and optional configured Shortcuts search (unread counts unavailable)
-- **Productivity**: Notes, Calendar, Reminders, Contacts, with IDs, paging, validated writes, and timezone-aware dates
-- **Media**: Photos, Music, TV, QuickTime, Image Events, and Final Cut Pro library metadata
-- **Utilities**: Clipboard, dialogs, notifications, speech, volume, Terminal, Automator, System Settings, and property lists
-- **Capability Discovery**: Installed bundle identities, OSA languages, and cached scripting dictionaries with explicit qualification state
-
-New typed helpers use a 30-second deadline; raw execution and legacy calls keep their existing unlimited default. Pass execution options directly or use `ExMacOSControl.with_options/2` to apply a deadline and output limit within the current process. Timeout errors report unknown outcomes for app effects already dispatched, so sends are not automatically retried.
-
-Dictionary discovery reports declared capabilities as unverified. Live account writes, interactive UI workflows and recording require separate qualification in a suitable macOS session.
-
-### Advanced Features
-- **Permissions**: Check and manage macOS automation permissions
-- **Retry Logic**: Automatic retry with exponential/linear backoff
-- **Telemetry**: Built-in observability via `:telemetry` events
-- **Script DSL**: Optional Elixir DSL for building AppleScript
-- **Platform Detection**: Explicit macOS and executable validation helpers
-
-## Quick Start
-
-### AppleScript Execution
+Start `iex -S mix` and verify script execution:
 
 ```elixir
-# Basic AppleScript execution
-{:ok, result} = ExMacOSControl.run_applescript(~s(return "Hello, World!"))
-# => {:ok, "Hello, World!"}
-
-# With timeout (5 seconds)
-{:ok, result} = ExMacOSControl.run_applescript("delay 2\nreturn \"done\"", timeout: 5000)
-# => {:ok, "done"}
-
-# With arguments
-script = """
-on run argv
-  set name to item 1 of argv
-  return "Hello, " & name
-end run
-"""
-{:ok, result} = ExMacOSControl.run_applescript(script, args: ["World"])
-# => {:ok, "Hello, World"}
-
-# Combined options
-{:ok, result} = ExMacOSControl.run_applescript(script, timeout: 5000, args: ["Elixir"])
-# => {:ok, "Hello, Elixir"}
+{:ok, "Hello from macOS"} =
+  ExMacOSControl.run_applescript(~s(return "Hello from macOS"), timeout: 5_000)
 ```
 
-### JavaScript for Automation (JXA)
+The project requires Elixir `~> 1.19`. Real automation requires macOS and the
+native tool for the operation (`osascript`, `shortcuts`, etc.). CI checks native
+contracts on macOS 26; that is the tested host, not a promise that every API works
+on all macOS releases. Shortcuts needs macOS 12 or later. The optional EventKit
+helper targets macOS 14 or later and requires Apple's Swift toolchain to build.
+App versions, account configuration, and macOS permissions also affect availability.
+
+## Try a workflow
+
+Select a page in Safari, then save it to Notes:
 
 ```elixir
-# Basic JXA execution
-{:ok, result} = ExMacOSControl.run_javascript("(function() { return 'Hello from JXA!'; })()")
-# => {:ok, "Hello from JXA!"}
+alias ExMacOSControl.Workflows
 
-# Application automation
-{:ok, name} = ExMacOSControl.run_javascript("Application('Finder').name()")
-# => {:ok, "Finder"}
-
-# With arguments
-script = "function run(argv) { return argv[0]; }"
-{:ok, result} = ExMacOSControl.run_javascript(script, args: ["test"])
-# => {:ok, "test"}
+{:ok, note_id} = Workflows.current_page_to_note(timeout: 15_000)
 ```
 
-### Script File Execution
+This captures the page once, then creates a note containing its URL and selected
+text, falling back to visible page text when nothing is selected. Without
+`folder_id:`, Notes uses its default account and folder. For an explicit
+destination, discover folders with `ExMacOSControl.Notes.list_folders/1` and pass
+the chosen ID. Safari captures require **Allow JavaScript from Apple Events** in
+Safari's developer settings, as well as Automation permission.
+
+Other built-in handoffs include clipboard → Notes/Reminders/Shortcuts, selected
+Finder files → a Mail draft/Photos/Image Events/Shortcuts, and Mail messages or
+Calendar events → Notes/Reminders. Messages workflows perform real sends to an
+explicit chat ID. Mail workflows create drafts. See the
+[workflow guide](docs/guides/workflows.md) for destinations, return values, and
+examples.
+
+## Build your own
+
+Compose reads and writes with `with`, and give the whole operation one deadline:
 
 ```elixir
-# Execute AppleScript file (auto-detected from .applescript extension)
-{:ok, result} = ExMacOSControl.run_script_file("/path/to/script.applescript")
-
-# Execute JavaScript file (auto-detected from .js extension)
-{:ok, result} = ExMacOSControl.run_script_file("/path/to/script.js")
-
-# With arguments
-{:ok, result} = ExMacOSControl.run_script_file(
-  "/path/to/script.applescript",
-  args: ["arg1", "arg2"]
-)
-
-# With timeout
-{:ok, result} = ExMacOSControl.run_script_file(
-  "/path/to/script.js",
-  timeout: 5000
-)
-
-# Override language detection for files with non-standard extensions
-{:ok, result} = ExMacOSControl.run_script_file(
-  "/path/to/script.txt",
-  language: :applescript
-)
-
-# All options combined
-{:ok, result} = ExMacOSControl.run_script_file(
-  "/path/to/script.scpt",
-  language: :applescript,
-  args: ["test"],
-  timeout: 10_000
-)
-```
-
-### macOS Shortcuts
-
-```elixir
-# Run macOS Shortcuts
-:ok = ExMacOSControl.run_shortcut("My Shortcut Name")
-
-# Run Shortcut with string input
-{:ok, result} = ExMacOSControl.run_shortcut("Process Text", input: "Hello, World!")
-
-# Run Shortcut with map input (serialized as JSON)
-{:ok, result} = ExMacOSControl.run_shortcut("Process Data", input: %{
-  "name" => "John",
-  "age" => 30
-})
-
-# Run Shortcut with list input
-{:ok, result} = ExMacOSControl.run_shortcut("Process Items", input: ["item1", "item2", "item3"])
-
-# List available shortcuts
-{:ok, shortcuts} = ExMacOSControl.list_shortcuts()
-# => {:ok, ["Shortcut 1", "Shortcut 2", "My Shortcut"]}
-
-# Check if a shortcut exists before running it
-case ExMacOSControl.list_shortcuts() do
-  {:ok, shortcuts} ->
-    if "My Shortcut" in shortcuts do
-      ExMacOSControl.run_shortcut("My Shortcut")
-    end
-  {:error, reason} ->
-    {:error, reason}
-end
-```
-
-### System Events - Process Management
-
-Control running applications on macOS:
-
-```elixir
-# List all running apps
-{:ok, processes} = ExMacOSControl.SystemEvents.list_processes()
-# => {:ok, ["Safari", "Finder", "Terminal", "Mail", ...]}
-
-# Check if an app is running
-{:ok, true} = ExMacOSControl.SystemEvents.process_exists?("Safari")
-# => {:ok, true}
-
-{:ok, false} = ExMacOSControl.SystemEvents.process_exists?("NonexistentApp")
-# => {:ok, false}
-
-# Launch an app
-:ok = ExMacOSControl.SystemEvents.launch_application("Calculator")
-# => :ok
-
-# Activate (bring to front) an app - same as launch
-:ok = ExMacOSControl.SystemEvents.activate_application("Safari")
-# => :ok
-
-# Quit an app gracefully
-:ok = ExMacOSControl.SystemEvents.quit_application("Calculator")
-# => :ok
-
-# Full workflow example
-app_name = "Calculator"
-
-# Check if it's running
-case ExMacOSControl.SystemEvents.process_exists?(app_name) do
-  {:ok, false} ->
-    # Not running, launch it
-    ExMacOSControl.SystemEvents.launch_application(app_name)
-  {:ok, true} ->
-    # Already running, bring to front
-    ExMacOSControl.SystemEvents.activate_application(app_name)
-end
-```
-
-**Note**: This module requires automation permission for System Events. macOS may prompt for permission on first use.
-
-### System Events - UI Automation
-
-Control application UI elements programmatically (requires Accessibility permission):
-
-```elixir
-# Click menu items
-:ok = ExMacOSControl.SystemEvents.click_menu_item("Safari", "File", "New Tab")
-# => :ok
-
-:ok = ExMacOSControl.SystemEvents.click_menu_item("TextEdit", "Format", "Make Plain Text")
-# => :ok
-
-# Send keystrokes
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "a")
-# => :ok
-
-# Send keystrokes with modifiers
-:ok = ExMacOSControl.SystemEvents.press_key("Safari", "t", using: [:command])
-# => :ok
-
-# Multiple modifiers (Command+Shift+Q)
-:ok = ExMacOSControl.SystemEvents.press_key("Safari", "q", using: [:command, :shift])
-# => :ok
-
-# Get window properties
-{:ok, props} = ExMacOSControl.SystemEvents.get_window_properties("Safari")
-# => {:ok, %{position: [100, 100], size: [800, 600], title: "Google"}}
-
-# Application with no windows returns nil
-{:ok, nil} = ExMacOSControl.SystemEvents.get_window_properties("AppWithNoWindows")
-# => {:ok, nil}
-
-# Set window bounds
-:ok = ExMacOSControl.SystemEvents.set_window_bounds("Calculator",
-  position: [100, 100],
-  size: [400, 500]
-)
-# => :ok
-
-# Complete UI automation workflow
-# 1. Launch app
-:ok = ExMacOSControl.SystemEvents.launch_application("TextEdit")
-
-# 2. Create new document (Command+N)
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "n", using: [:command])
-
-# 3. Type some text
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "H")
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "e")
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "l")
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "l")
-:ok = ExMacOSControl.SystemEvents.press_key("TextEdit", "o")
-
-# 4. Get window properties
-{:ok, props} = ExMacOSControl.SystemEvents.get_window_properties("TextEdit")
-
-# 5. Resize window
-:ok = ExMacOSControl.SystemEvents.set_window_bounds("TextEdit",
-  position: [0, 0],
-  size: [1000, 800]
-)
-```
-
-**Important**: UI automation requires Accessibility permission. Enable in:
-
-System Settings → Privacy & Security → Accessibility
-
-(Or System Preferences → Security & Privacy → Privacy → Accessibility on older macOS)
-
-Add Terminal (or your Elixir runtime) to the list of allowed applications.
-
-**Available Modifiers**: `:command`, `:control`, `:option`, `:shift`
-
-### System Events - File Operations
-
-Convenient helpers for file operations using Finder:
-
-```elixir
-# Reveal file in Finder (opens window and selects the file)
-:ok = ExMacOSControl.SystemEvents.reveal_in_finder("/Users/me/Documents/report.pdf")
-# => :ok
-
-# Get currently selected items in Finder
-{:ok, selected} = ExMacOSControl.SystemEvents.get_selected_finder_items()
-# => {:ok, ["/Users/me/file1.txt", "/Users/me/file2.txt"]}
-
-# Empty selection returns empty list
-{:ok, []} = ExMacOSControl.SystemEvents.get_selected_finder_items()
-# => {:ok, []}
-
-# Move file to trash
-:ok = ExMacOSControl.SystemEvents.trash_file("/Users/me/old_file.txt")
-# => :ok
-
-# Complete workflow example
-# 1. Create a test file
-File.write!("/tmp/test.txt", "test content")
-
-# 2. Reveal it in Finder
-:ok = ExMacOSControl.SystemEvents.reveal_in_finder("/tmp/test.txt")
-
-# 3. Get selected items (the file we just revealed should be selected)
-{:ok, selected} = ExMacOSControl.SystemEvents.get_selected_finder_items()
-# => {:ok, ["/tmp/test.txt"]}
-
-# 4. Move to trash when done
-:ok = ExMacOSControl.SystemEvents.trash_file("/tmp/test.txt")
-
-# Error handling
-{:error, error} = ExMacOSControl.SystemEvents.reveal_in_finder("/nonexistent/file")
-# => {:error, %ExMacOSControl.Error{type: :not_found, ...}}
-
-{:error, error} = ExMacOSControl.SystemEvents.trash_file("relative/path")
-# => {:error, %ExMacOSControl.Error{type: :execution_error, message: "Path must be absolute", ...}}
-```
-
-**Important Notes**:
-- File operation paths must be absolute (start with `/`)
-- `reveal_in_finder/1` will open a Finder window and bring Finder to the front
-- `trash_file/1` moves items to Trash (not permanent deletion), but should still be used with caution
-- File operations require Finder access (usually granted automatically)
-
-### Finder Automation
-
-Control the macOS Finder application:
-
-```elixir
-# Get selected files in Finder
-{:ok, files} = ExMacOSControl.Finder.get_selection()
-# => {:ok, ["/Users/me/file.txt", "/Users/me/file2.txt"]}
-
-# Empty selection returns empty list
-{:ok, []} = ExMacOSControl.Finder.get_selection()
-# => {:ok, []}
-
-# Open Finder at a location
-:ok = ExMacOSControl.Finder.open_location("/Users/me/Documents")
-# => :ok
-
-# Create new Finder window
-:ok = ExMacOSControl.Finder.new_window("/Applications")
-# => :ok
-
-# Get current folder path
-{:ok, path} = ExMacOSControl.Finder.get_current_folder()
-# => {:ok, "/Users/me/Documents"}
-
-# Returns empty string if no Finder windows open
-{:ok, ""} = ExMacOSControl.Finder.get_current_folder()
-# => {:ok, ""}
-
-# Set view mode
-:ok = ExMacOSControl.Finder.set_view(:icon)    # Icon view
-:ok = ExMacOSControl.Finder.set_view(:list)    # List view
-:ok = ExMacOSControl.Finder.set_view(:column)  # Column view
-:ok = ExMacOSControl.Finder.set_view(:gallery) # Gallery view
-
-# Error handling
-{:error, error} = ExMacOSControl.Finder.open_location("/nonexistent/path")
-# => {:error, %ExMacOSControl.Error{...}}
-
-{:error, error} = ExMacOSControl.Finder.set_view(:invalid)
-# => {:error, %ExMacOSControl.Error{type: :execution_error, message: "Invalid view mode", ...}}
-```
-
-**Note**: This module requires automation permission for Finder. macOS may prompt for permission on first use.
-
-### Safari Automation
-
-Control Safari browser programmatically:
-
-```elixir
-# Open URL in new tab
-:ok = ExMacOSControl.Safari.open_url("https://example.com")
-# => :ok
-
-# Get current tab URL
-{:ok, url} = ExMacOSControl.Safari.get_current_url()
-# => {:ok, "https://example.com"}
-
-# Execute JavaScript in current tab
-{:ok, title} = ExMacOSControl.Safari.execute_javascript("document.title")
-# => {:ok, "Example Domain"}
-
-{:ok, result} = ExMacOSControl.Safari.execute_javascript("2 + 2")
-# => {:ok, "4"}
-
-# List all tab URLs across all windows
-{:ok, urls} = ExMacOSControl.Safari.list_tabs()
-# => {:ok, ["https://example.com", "https://google.com", "https://github.com"]}
-
-# Close a tab by index (1-based)
-:ok = ExMacOSControl.Safari.close_tab(2)
-# => :ok
-
-# Complete workflow example
-# Open a new tab
-:ok = ExMacOSControl.Safari.open_url("https://example.com")
-
-# Wait for page to load, then execute JavaScript
-Process.sleep(2000)
-{:ok, title} = ExMacOSControl.Safari.execute_javascript("document.title")
-
-# List all tabs
-{:ok, tabs} = ExMacOSControl.Safari.list_tabs()
-IO.inspect(tabs, label: "Open tabs")
-
-# Close the first tab
-:ok = ExMacOSControl.Safari.close_tab(1)
-```
-
-**Note**: This module requires automation permission for Safari. Tab indices are 1-based (1 is the first tab).
-
-### Mail Automation
-
-Control Mail.app programmatically:
-
-```elixir
-# Send an email
-:ok = ExMacOSControl.Mail.send_email(
-  to: "recipient@example.com",
-  subject: "Automated Report",
-  body: "Here is your daily report."
-)
-
-# Send with CC and BCC
-:ok = ExMacOSControl.Mail.send_email(
-  to: "team@example.com",
-  subject: "Team Update",
-  body: "Weekly status update.",
-  cc: ["manager@example.com"],
-  bcc: ["archive@example.com"]
-)
-
-# Get unread count (inbox)
-{:ok, count} = ExMacOSControl.Mail.get_unread_count()
-# => {:ok, 42}
-
-# Get unread count (specific mailbox)
-{:ok, count} = ExMacOSControl.Mail.get_unread_count("Work")
-# => {:ok, 5}
-
-# Search mailbox
-{:ok, messages} = ExMacOSControl.Mail.search_mailbox("INBOX", "invoice")
-# => {:ok, [%{subject: "Invoice #123", from: "billing@example.com", date: "2025-01-15"}, ...]}
-
-# Complete workflow example
-# Check unread count
-{:ok, unread} = ExMacOSControl.Mail.get_unread_count()
-IO.puts("You have #{unread} unread messages")
-
-# Search for important messages
-{:ok, messages} = ExMacOSControl.Mail.search_mailbox("INBOX", "urgent")
-
-# Process search results
-Enum.each(messages, fn msg ->
-  IO.puts("From: #{msg.from}")
-  IO.puts("Subject: #{msg.subject}")
-  IO.puts("Date: #{msg.date}")
-  IO.puts("---")
-end)
-
-# Send notification email if urgent messages found
-if length(messages) > 0 do
-  :ok = ExMacOSControl.Mail.send_email(
-    to: "admin@example.com",
-    subject: "Urgent Messages Alert",
-    body: "Found #{length(messages)} urgent messages requiring attention."
-  )
-end
-```
-
-**Important Safety Notes**:
-- Mail automation requires Mail.app to be configured with an email account
-- `send_email/1` sends emails immediately - there is no undo
-- Use with caution in production environments
-- Consider adding confirmation prompts before sending emails
-- Test with safe recipient addresses first
-
-### Messages Automation
-
-⚠️  **Safety Warning:** Message sending functions will send real messages!
-
-Control the Messages app programmatically:
-
-```elixir
-# Send a message (iMessage or SMS)
-:ok = ExMacOSControl.Messages.send_message("+1234567890", "Hello!")
-
-# Send to a contact name
-:ok = ExMacOSControl.Messages.send_message("John Doe", "Meeting at 3pm?")
-
-# Explicit :sms / :imessage selection is unsupported and returns an error
-# without sending; only service: :auto (the default) is accepted.
-
-# List all chats (unread counts are unavailable, not zero)
-{:ok, chats} = ExMacOSControl.Messages.list_chats()
-# => {:ok, [
-#   %{id: "iMessage;+E:+1234567890", name: "+1234567890", unread: nil},
-#   %{id: "iMessage;-;+E:john@icloud.com", name: "John Doe", unread: nil}
-# ]}
-
-# Unread counts are not exposed by the Messages AppleScript API
-{:error, error} = ExMacOSControl.Messages.get_unread_count()
-# => {:error, %ExMacOSControl.Error{type: :execution_error, ...}}
-```
-
-**Required Permissions:**
-- Automation permission for Terminal/your app to control Messages
-
-**Important Safety Notes**:
-- `send_message/2` and `send_message/3` send real messages immediately - there is no undo
-- Messages chooses the delivery service; SMS fallback is not guaranteed by this library
-- Explicit `:sms` or `:imessage` service requests return an error before sending
-- `get_recent_messages/1` returns an unsupported-functionality error; AppleScript does not expose message history
-- Be extremely careful when using in automated scripts
-- Consider adding confirmation prompts before sending messages
-- Test with your own phone number first
-
-## Checking and Managing Permissions
-
-macOS requires explicit permissions for automation. Use the Permissions module to check and manage these:
-
-```elixir
-# Check accessibility permission
-case ExMacOSControl.Permissions.check_accessibility() do
-  {:ok, :granted} ->
-    IO.puts("Ready for UI automation!")
-  {:ok, :not_granted} ->
-    ExMacOSControl.Permissions.show_accessibility_help()
-end
-
-# Check automation permission for specific apps
-ExMacOSControl.Permissions.check_automation("Safari")
-# => {:ok, :granted} | {:ok, :not_granted} | {:error, error}
-
-# Nonprompting preflight keeps a stopped target distinct from a denied grant
-ExMacOSControl.Permissions.preflight_automation("com.apple.Safari")
-# => {:ok, :granted | :denied | :requires_consent | :not_running | :unavailable | :unknown}
-
-# Get overview of all permissions
-statuses = ExMacOSControl.Permissions.check_all()
-# => %{accessibility: :granted, safari_automation: :not_granted, ...}
-
-# Open System Settings to grant permissions
-ExMacOSControl.Permissions.open_accessibility_preferences()
-ExMacOSControl.Permissions.open_automation_preferences()
-```
-
-**Required Permissions:**
-- **Accessibility**: For UI automation (menu items, keystrokes, windows)
-- **Automation**: For controlling specific apps (Safari, Finder, Mail, etc.)
-
-## Performance & Reliability
-
-### Retry Logic
-
-ExMacOSControl includes automatic retry functionality for handling transient failures like timeouts:
-
-```elixir
-alias ExMacOSControl.Retry
-
-# Basic retry with exponential backoff (default: 3 attempts)
-# Retries: immediately, after 200ms, after 400ms
-{:ok, result} = Retry.with_retry(fn ->
-  ExMacOSControl.Finder.get_selection()
-end)
-
-# Custom max attempts with linear backoff
-# Retries: immediately, after 1s, after 1s, after 1s, after 1s
-{:ok, windows} = Retry.with_retry(fn ->
-  ExMacOSControl.SystemEvents.get_window_properties("Safari")
-end, max_attempts: 5, backoff: :linear)
-
-# Combining timeout and retry for reliability
-{:ok, result} = Retry.with_retry(fn ->
-  ExMacOSControl.run_applescript(script, timeout: 10_000)
-end, max_attempts: 3, backoff: :exponential)
-```
-
-**Retry Behavior:**
-- Retries timeout errors; native timeouts with unknown effects require `idempotent: true`
-- Never mark sending mail or messages idempotent: an app may have accepted the operation before a timeout
-- Non-timeout errors (syntax, permission, not found) return immediately
-- Exponential backoff: 200ms, 400ms, 800ms, 1600ms, etc.
-- Linear backoff: constant 1000ms between retries
-
-**When to Use:**
-- ✅ Timeout errors that may succeed on retry
-- ✅ Operations depending on application state
-- ✅ UI automation affected by system responsiveness
-- ❌ Syntax errors (won't be fixed by retrying)
-- ❌ Permission errors (user intervention required)
-
-### Telemetry
-
-ExMacOSControl emits telemetry events for monitoring and observability:
-
-```elixir
-# In your application.ex
-:telemetry.attach_many(
-  "ex-macos-control-handler",
-  [
-    [:ex_macos_control, :applescript, :start],
-    [:ex_macos_control, :applescript, :stop],
-    [:ex_macos_control, :applescript, :exception],
-    [:ex_macos_control, :retry, :start],
-    [:ex_macos_control, :retry, :stop],
-    [:ex_macos_control, :retry, :error]
-  ],
-  &MyApp.handle_telemetry/4,
-  nil
-)
-
-# Example handler to track slow operations
-defmodule MyApp do
-  def handle_telemetry([:ex_macos_control, :applescript, :stop], measurements, metadata, _) do
-    duration_ms = measurements.duration / 1_000
-
-    if duration_ms > 5_000 do
-      Logger.warning("Slow operation: #{duration_ms}ms - #{metadata.source_id}")
-    end
+alias ExMacOSControl.{Capture, Composition, Notes}
+
+Composition.run(fn ->
+  with {:ok, text} <- Composition.step(:capture_clipboard, &Capture.clipboard/0),
+       {:ok, id} <- Composition.effect(:create_note, fn ->
+         Notes.create_from(text, title: "Clipboard capture")
+       end, resource: :note) do
+    {:ok, id}
   end
-
-  def handle_telemetry(_, _, _, _), do: :ok
-end
+end, timeout: 10_000)
 ```
 
-**Available Events:**
-- `[:ex_macos_control, :applescript, :start]` - Script execution begins
-- `[:ex_macos_control, :applescript, :stop]` - Script succeeds (includes `duration` in microseconds)
-- `[:ex_macos_control, :applescript, :exception]` - Script fails (includes `error` details)
-- `[:ex_macos_control, :retry, :*]` - Retry lifecycle events
+Steps return `:ok`, `{:ok, value}`, or `{:error, %ExMacOSControl.Error{}}`.
+Effects are attempted once. On failure, completed results remain available in
+the error details; previous changes are not rolled back. Follow
+[building workflows](docs/guides/building_workflows.md) to add verification,
+batch operations, tracing, and tests.
 
-See [docs/performance.md](docs/performance.md) for comprehensive performance guide including:
-- Timeout configuration recommendations
-- Common bottlenecks and solutions
-- Benchmarking strategies
-- When to use retry logic
-- Complete telemetry event reference
+## Capabilities
 
-## Installation
+| Area | What you can do |
+| --- | --- |
+| Execution | Run AppleScript/JXA source or files, including compiled scripts and bundles; compile, validate, and decompile scripts. |
+| Safari | Address windows/tabs, capture pages, wait for selectors, extract fields, fill forms, and click elements; use owned windows with cleanup and optional document guards. |
+| Finder | Read/set selections, inspect windows and metadata, copy/move/rename files, create folders, and process a captured selection. |
+| Mail and Messages | Discover accounts and chats, read/search Mail, manage attachments and flags, create saved/verified drafts, and explicitly send mail or Messages text/files. |
+| Productivity | Read and write Notes, Reminders, Calendar, and Contacts resources using native IDs; compose batches and related operations. |
+| Media | Manage Photos imports/albums/exports; control Music/TV; work with QuickTime documents; transform images through Image Events; read Final Cut Pro library/project metadata. |
+| Desktop | Manage application lifecycle/focus; inspect accessibility trees and actions; operate menus, keys, and windows; run commands in an owned Terminal window in the logged-in GUI session. |
+| Native utilities | Clipboard, dialogs, notifications, speech, volume, property lists, Terminal scripts, existing Automator workflows, and System Settings pane navigation. |
+| Shortcuts | Discover names/IDs/folders, run text/JSON/file input, handle typed output, chain installed shortcuts, and use a versioned workflow protocol. |
+| Discovery and diagnostics | Inspect installed apps, OSA languages, scripting dictionaries, permission states, and fixed live qualification profiles. |
+| Optional EventKit | Build/install a native helper for verified Calendar event operations and Reminder batches using separate EventKit references. |
 
-Add `ex_macos_control` to your list of dependencies in `mix.exs`:
+The [capability reference](docs/capabilities.md) covers module boundaries and
+limitations. In particular, Messages history needs a user-configured Shortcut,
+Messages unread counts are unavailable, System Settings has no universal toggle
+API, and Final Cut Pro support does not include general timeline editing.
+Scripting dictionary declarations are unverified until exercised on the target
+host. Mock tests and native source contracts do not establish live account or UI
+compatibility.
 
-```elixir
-def deps do
-  [
-    {:ex_macos_control, "~> 0.2.0"}
-  ]
-end
-```
+## Execution and permissions
 
-Then run:
+New typed app helpers and compositions generally use a 30-second deadline. Raw
+script execution and legacy wrappers have no default deadline; pass `timeout:`
+explicitly or use `ExMacOSControl.with_options/2`. The default combined stdout
+and stderr limit is 10 MiB. A composition shares one budget across its operations;
+a `with_options/2` scope applies options to individual calls in the current process.
 
-```bash
-mix deps.get
-```
+Timeout stops the owned command process group, but an app may already have acted.
+An unknown outcome needs observation before another write. The library does not
+automatically retry sends or mutations. See
+[captures and recovery](docs/guides/captures_and_recovery.md).
 
-### Verify Installation
-
-```elixir
-# In iex
-iex> ExMacOSControl.run_applescript(~s(return "Hello!"))
-{:ok, "Hello!"}
-```
-
-If this works, you're ready to automate! 🎉
-
-### System Requirements
-
-- macOS 10.15 (Catalina) or later
-- Elixir 1.19 or later
-- Appropriate macOS permissions (accessibility, automation, etc.)
-
-See the [Permissions section](#checking-and-managing-permissions) for details on required permissions.
+macOS may require Automation access to each target app, Accessibility access for
+UI work, and separate EventKit access for the optional helper. The library can
+inspect permission states and open settings; the user grants access. Follow
+[getting started](docs/guides/getting_started.md) for setup and troubleshooting.
 
 ## Documentation
 
-Full documentation is available at [https://hexdocs.pm/ex_macos_control](https://hexdocs.pm/ex_macos_control).
+Guides are readable here on GitHub and are included alongside the
+[HexDocs API reference](https://hexdocs.pm/ex_macos_control):
+
+- [Documentation index](docs/index.md) — choose a guide by task.
+- [Getting started](docs/guides/getting_started.md) — install, permissions, first automation.
+- [Using built-in workflows](docs/guides/workflows.md) — practical recipes and their effects.
+- [Building your own workflows](docs/guides/building_workflows.md) — compositions, verification, batches, testing.
+- [Common patterns](docs/guides/common_patterns.md) — browser extraction, app focus, file batches, drafts.
+- [Integrating Shortcuts](docs/guides/shortcuts.md) — create a companion Shortcut and exchange data.
+- [Captures and recovery](docs/guides/captures_and_recovery.md) — snapshots, staged files, journals, partial failures.
+- [Optional EventKit](docs/guides/eventkit.md) — install the helper and use native references.
+- [Advanced usage](docs/guides/advanced_usage.md) — execution options, telemetry, adapters, tasks.
+- [Script DSL and raw scripts](docs/guides/dsl_vs_raw.md) — extend beyond the app wrappers.
+
+Build the documentation locally with `mix docs --warnings-as-errors --output
+tmp/docs`. Start at `tmp/docs/index.html`.
 
 ## Development
 
-### Setup
-
-```bash
-# Install dependencies
+```sh
 mix deps.get
-
-# Install git hooks (recommended)
-./scripts/install-hooks.sh
-
-# Run tests
-mix test
-```
-
-**Git Hooks:** This project uses pre-commit and pre-push hooks to ensure code quality. See [docs/git_hooks.md](docs/git_hooks.md) for details.
-
-### Code Quality
-
-This project uses strict code quality standards. All contributions must pass the following checks:
-
-#### Run All Quality Checks
-
-```bash
-# Run all quality checks (format, credo, dialyzer)
+mix test --warnings-as-errors
 mix quality
+mix docs --warnings-as-errors --output tmp/docs
 ```
 
-#### Individual Checks
-
-```bash
-# Format code
-mix format
-
-# Check code formatting
-mix format.check
-
-# Run Credo static analysis (strict mode)
-mix credo --strict
-
-# Run Dialyzer type checking
-mix dialyzer
-
-# Run tests
-mix test
-```
-
-### Quality Standards
-
-- **Formatting**: All code must be formatted with `mix format` (120 character line length)
-- **Credo**: All code must pass strict Credo checks with zero warnings
-- **Dialyzer**: All code must pass Dialyzer type checking with zero warnings
-- **Tests**: Aim for 100% test coverage on new code (minimum 90%)
-- **Documentation**: All public functions must have `@doc`, `@spec`, and `@moduledoc`
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines and standards.
-
-## Extending ExMacOSControl
-
-### Creating New App Modules
-
-Want to add automation for additional macOS apps? ExMacOSControl provides comprehensive documentation for creating new app automation modules.
-
-See the [App Module Creation Guide](docs/creating_app_modules.md) for:
-- Step-by-step instructions for creating modules
-- Common patterns and best practices
-- Testing strategies (unit and integration)
-- Complete examples (Music and Calendar modules)
-- Troubleshooting guide
-- Ready-to-use boilerplate templates
-
-The guide includes everything you need to extend ExMacOSControl with new functionality while following established patterns and maintaining code quality standards.
-
-## What's Next?
-
-### 📚 Learn More
-
-- **[Getting Started Guide](https://hexdocs.pm/ex_macos_control/guides_getting_started.html)** - Complete walkthrough for first-time users
-- **[Common Patterns](https://hexdocs.pm/ex_macos_control/guides_common_patterns.html)** - Real-world automation examples and workflows
-- **[DSL vs Raw AppleScript](https://hexdocs.pm/ex_macos_control/guides_dsl_vs_raw.html)** - Choosing the right approach for your use case
-- **[Advanced Usage](https://hexdocs.pm/ex_macos_control/guides_advanced_usage.html)** - Telemetry, custom adapters, and performance tuning
-- **[Performance Guide](https://hexdocs.pm/ex_macos_control/performance.html)** - Optimization tips and best practices
-
-### 💬 Get Help
-
-- **Issues**: [GitHub Issues](https://github.com/houllette/ex_macos_control/issues) for bugs and feature requests
-- **Discussions**: [GitHub Discussions](https://github.com/houllette/ex_macos_control/discussions) for questions and community support
-- **Documentation**: [HexDocs](https://hexdocs.pm/ex_macos_control) for API reference
-
-### 🤝 Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
-
-- Code of conduct
-- Development setup
-- Testing requirements
-- Pull request process
-
-Whether it's fixing bugs, adding new app modules, improving documentation, or sharing use cases—all contributions are appreciated!
+`mix test` excludes integration, desktop, Shortcut, and personal-account tests by
+default. Live tests require an appropriate macOS session and explicit opt-ins.
+See [testing](docs/testing.md), [contributing](CONTRIBUTING.md), and
+[creating app modules](docs/creating_app_modules.md). Optional local hooks are
+installed with `./scripts/install-hooks.sh`; their behavior is documented in
+[Git hooks](docs/git_hooks.md).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- Built with [Elixir](https://elixir-lang.org/)
-- Powered by macOS [osascript](https://ss64.com/osx/osascript.html) and the Shortcuts app
-- Inspired by the macOS automation community
+[MIT](LICENSE).

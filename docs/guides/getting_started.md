@@ -1,549 +1,178 @@
-# Getting Started with ExMacOSControl
+# Getting started
 
-Welcome to ExMacOSControl! This guide will help you get up and running with macOS automation using Elixir.
+This guide takes you from installation to a page extraction and a cross-app
+workflow. Run examples from an Elixir project on your Mac.
 
-## What You'll Learn
+## Requirements
 
-- Installing and verifying ExMacOSControl
-- Understanding AppleScript vs JavaScript for Automation (JXA)
-- Setting up required macOS permissions
-- Running your first automation
-- Common gotchas and troubleshooting
-- Next steps for building real automation
+- Elixir `~> 1.19` and an Erlang/OTP release compatible with it. CI exercises
+  Elixir 1.19/OTP 28 and Elixir 1.20/OTP 29.
+- macOS for real automation. CI's native contract checks run on macOS 26;
+  availability on other releases depends on the native APIs and app versions used.
+- A logged-in desktop session for app/UI automation. SSH or a background service
+  does not necessarily have the same GUI or permission context as Terminal.
+- The target apps, accounts, and permissions required for the operation.
 
-## Prerequisites
+Shortcuts requires macOS 12 or later. The optional EventKit helper targets macOS
+14 or later and needs Apple's Swift compiler for installation. Ordinary
+AppleScript/JXA calls do not build or install that helper.
 
-Before you begin, ensure you have:
+## Install and verify
 
-- **macOS 10.15 (Catalina) or later**
-- **Elixir 1.19 or later** - [Install Elixir](https://elixir-lang.org/install.html)
-- **Basic Elixir knowledge** - Familiarity with pattern matching, modules, and functions
-- **Terminal access** - You'll be running commands from the terminal
-
-## Installation
-
-### 1. Add Dependency
-
-Add ExMacOSControl to your `mix.exs`:
+Add to your project's dependency list in `mix.exs`:
 
 ```elixir
-def deps do
-  [
-    {:ex_macos_control, "~> 0.2.0"}
-  ]
-end
+{:ex_macos_control, "~> 0.3.0"}
 ```
 
-### 2. Fetch Dependencies
+Fetch dependencies and start IEx:
 
-```bash
+```sh
 mix deps.get
-```
-
-### 3. Verify Installation
-
-Start an IEx session and try a simple command:
-
-```elixir
 iex -S mix
-
-iex> ExMacOSControl.run_applescript(~s(return "Hello from macOS!"))
-{:ok, "Hello from macOS!"}
 ```
 
-If you see `{:ok, "Hello from macOS!"}`, congratulations! ExMacOSControl is installed and working.
-
-## Your First Automation
-
-Let's build a simple automation that:
-1. Checks if Safari is running
-2. Launches it if needed
-3. Opens a URL
-4. Extracts the page title
-
-### Step 1: Check if Safari is Running
+Verify the execution layer without controlling another app:
 
 ```elixir
-alias ExMacOSControl.SystemEvents
+{:ok, "Hello from macOS"} =
+  ExMacOSControl.run_applescript(~s(return "Hello from macOS"), timeout: 5_000)
 
-{:ok, is_running} = SystemEvents.process_exists?("Safari")
+{:ok, "Hello from JXA"} =
+  ExMacOSControl.run_javascript("'Hello from JXA'", timeout: 5_000)
+```
 
-if is_running do
-  IO.puts("Safari is already running")
-else
-  IO.puts("Safari is not running, launching...")
-  SystemEvents.launch_application("Safari")
-  Process.sleep(1000)  # Wait for Safari to launch
+Raw results are text by default, even when the script returns a number or a list.
+For structured results, return JSON and use `output: :json`:
+
+```elixir
+{:ok, %{"count" => 3}} =
+  ExMacOSControl.run_javascript("JSON.stringify({count: 3})",
+    output: :json,
+    timeout: 5_000
+  )
+```
+
+## Prepare permissions
+
+Automation permission is per target application. Accessibility permission is
+needed for UI actions such as menus and keystrokes. Grant permissions to the host
+macOS identifies in its prompt or settings; this may be Terminal, your IDE, or a
+packaged application. Switching how you launch Elixir can change that identity.
+
+```elixir
+alias ExMacOSControl.{Applications, Permissions}
+
+Permissions.check_accessibility()
+Permissions.open_accessibility_preferences()
+Permissions.open_automation_preferences()
+```
+
+The settings helpers open the appropriate pane; they do not grant access.
+For a deliberate consent flow, start the target and check its state:
+
+```elixir
+{:ok, _app} = Applications.ensure_running("com.apple.Safari", timeout: 5_000)
+
+case Permissions.preflight_automation("com.apple.Safari") do
+  {:ok, :granted} -> :ok
+  {:ok, :requires_consent} -> Permissions.request_automation("com.apple.Safari")
+  {:ok, state} -> {:permission_state, state}
+  {:error, error} -> {:error, error}
 end
 ```
 
-### Step 2: Open a URL
+Preflight does not request consent or launch the target. States are `:granted`,
+`:denied`, `:requires_consent`, `:not_running`, `:unavailable`, and `:unknown`.
+`request_automation/2` explicitly allows a consent prompt. A granted wildcard
+preflight does not prove every app command is supported.
+
+The older `Permissions.check_automation/1` performs a real `get name` Apple event
+and returns `:granted` or `:not_granted`; it can launch the app or prompt. Do not
+use it as a passive permission inventory.
+
+Safari DOM helpers also require **Allow JavaScript from Apple Events** in
+Safari's developer settings. Permission to automate Safari alone is insufficient.
+The EventKit helper has its own Calendar/Reminders consent, described in the
+[EventKit guide](eventkit.md). Full Disk Access is not a general prerequisite:
+this library does not read the Messages database directly.
+
+## Extract a page
+
+Prefer an owned page and an observable wait over a fixed sleep:
 
 ```elixir
 alias ExMacOSControl.Safari
 
-:ok = Safari.open_url("https://example.com")
-Process.sleep(2000)  # Wait for page to load
+{:ok, heading} = Safari.extract_text("https://example.com", "h1", timeout: 15_000)
+IO.puts(heading)
 ```
 
-### Step 3: Extract Page Title
+This opens a dedicated Safari window, waits for the page and selector, extracts
+the text, and closes the window it owns. It may launch Safari. Existing tabs are
+not used for this operation. If someone adds a tab to the owned window, cleanup
+refuses to close it and returns an error with resource details.
+
+For more work in one page scope:
 
 ```elixir
-{:ok, title} = Safari.execute_javascript("document.title")
-IO.puts("Page title: #{title}")
-# => Page title: Example Domain
-```
-
-### Complete Script
-
-Here's the complete automation in one script:
-
-```elixir
-defmodule MyFirstAutomation do
-  alias ExMacOSControl.{SystemEvents, Safari}
-
-  def run do
-    # Check if Safari is running
-    {:ok, is_running} = SystemEvents.process_exists?("Safari")
-
-    unless is_running do
-      IO.puts("Launching Safari...")
-      SystemEvents.launch_application("Safari")
-      Process.sleep(1000)
-    end
-
-    # Open URL
-    IO.puts("Opening https://example.com...")
-    :ok = Safari.open_url("https://example.com")
-    Process.sleep(2000)
-
-    # Get page title
-    {:ok, title} = Safari.execute_javascript("document.title")
-    IO.puts("Page title: #{title}")
-
-    {:ok, title}
+Safari.with_page("https://example.com", [timeout: 15_000], fn page ->
+  with :ok <- Safari.wait_for_selector(page, "h1") do
+    Safari.extract(page, %{"heading" => "h1", "paragraph" => "p"})
   end
-end
-
-# Run it
-MyFirstAutomation.run()
+end)
 ```
 
-## Understanding AppleScript vs JXA
+See [common patterns](common_patterns.md) for targeting, navigation, forms, and
+document guards.
 
-ExMacOSControl supports two macOS automation languages:
+## Run a cross-app workflow
 
-### AppleScript
-
-**Pros:**
-- Native macOS scripting language
-- Excellent app support
-- Extensive documentation and community resources
-- Natural language-like syntax
-
-**Cons:**
-- Quirky syntax
-- Less familiar to developers coming from other languages
-
-**Example:**
+Copy some text to the clipboard, then create a note:
 
 ```elixir
-script = """
-tell application "Finder"
-  get name of every file of desktop
-end tell
-"""
+alias ExMacOSControl.Workflows
 
-{:ok, files} = ExMacOSControl.run_applescript(script)
+{:ok, note_id} = Workflows.clipboard_to_note("Captured text", timeout: 10_000)
 ```
 
-### JavaScript for Automation (JXA)
+This writes to the default Notes folder. To choose a destination, discover it
+first with `ExMacOSControl.Notes.list_folders/1`, inspect the IDs, and pass
+`folder_id: chosen_id`. The library does not create account containers implicitly.
 
-**Pros:**
-- Uses JavaScript syntax (familiar to web developers)
-- Access to Objective-C bridge
-- More programmatic feel
+The [workflow guide](workflows.md) describes other handoffs and whether they
+create resources, send data, or leave windows open.
 
-**Cons:**
-- Less documentation than AppleScript
-- Some apps have better AppleScript support
-- Slightly less community resources
-
-**Example:**
+## Handle failures and deadlines
 
 ```elixir
-script = """
-var finder = Application('Finder')
-finder.desktop.files.name()
-"""
-
-{:ok, files} = ExMacOSControl.run_javascript(script)
-```
-
-### Which Should You Use?
-
-- **Use AppleScript when:**
-  - Working with apps that have excellent AppleScript dictionaries
-  - Following existing tutorials/documentation
-  - You find natural language syntax easier
-
-- **Use JXA when:**
-  - You're more comfortable with JavaScript
-  - You need ObjC bridge features
-  - You want more programmatic control
-
-**Good news:** You can mix both! Use whatever works best for each task.
-
-## macOS Permissions
-
-macOS requires explicit permissions for automation. ExMacOSControl makes it easy to check and request permissions.
-
-### Understanding Permission Types
-
-1. **Accessibility Permission**
-   - Required for: UI automation (menu clicks, keystrokes)
-   - Granted in: System Settings → Privacy & Security → Accessibility
-
-2. **Automation Permission**
-   - Required for: Controlling specific apps (Safari, Finder, Mail, etc.)
-   - Granted per-app when first accessed (macOS will prompt)
-
-3. **Full Disk Access** (rarely needed)
-   - Required for: Reading Messages database
-   - Granted in: System Settings → Privacy & Security → Full Disk Access
-
-### Checking Permissions
-
-```elixir
-alias ExMacOSControl.Permissions
-
-# Check accessibility permission
-case Permissions.check_accessibility() do
-  {:ok, :granted} ->
-    IO.puts("✅ Accessibility permission granted")
-  {:ok, :not_granted} ->
-    IO.puts("❌ Accessibility permission not granted")
-    Permissions.show_accessibility_help()
-end
-
-# Check automation permission for Safari
-case Permissions.check_automation("Safari") do
-  {:ok, :granted} ->
-    IO.puts("✅ Safari automation granted")
-  {:ok, :not_granted} ->
-    IO.puts("❌ Safari automation not granted")
-    Permissions.show_automation_help("Safari")
-end
-
-# Get overview of all permissions
-statuses = Permissions.check_all()
-IO.inspect(statuses)
-```
-
-### Pre-flight Check Pattern
-
-It's good practice to check permissions before running automation:
-
-```elixir
-defmodule SafeAutomation do
-  alias ExMacOSControl.{Permissions, Safari}
-
-  def run do
-    # Pre-flight check
-    with {:ok, :granted} <- Permissions.check_automation("Safari") do
-      # Run automation
-      Safari.open_url("https://example.com")
-    else
-      {:ok, :not_granted} ->
-        Permissions.show_automation_help("Safari")
-        {:error, :permission_denied}
-
-      error ->
-        error
-    end
-  end
+case ExMacOSControl.run_applescript("return 42", timeout: 5_000) do
+  {:ok, value} -> IO.puts(value)
+  {:error, %ExMacOSControl.Error{} = error} ->
+    IO.inspect({error.type, error.message}, label: "Automation failed")
 end
 ```
 
-### Granting Permissions
-
-ExMacOSControl can open System Settings to the right location:
-
-```elixir
-# Open accessibility preferences
-Permissions.open_accessibility_preferences()
-
-# Open automation preferences
-Permissions.open_automation_preferences()
-```
-
-macOS 13+ will open System Settings directly to the Privacy & Security pane.
-
-## Common Gotchas
-
-### 1. Scripts Need Time to Complete
-
-macOS automation isn't instant. Always account for timing:
-
-```elixir
-# ❌ BAD: No time for page to load
-Safari.open_url("https://example.com")
-Safari.execute_javascript("document.title")  # Might get previous page!
-
-# ✅ GOOD: Wait for page load
-Safari.open_url("https://example.com")
-Process.sleep(2000)
-{:ok, title} = Safari.execute_javascript("document.title")
-```
-
-### 2. Timeout Errors
-
-If scripts take too long, they'll timeout. Adjust the timeout:
-
-```elixir
-# Default timeout is usually 30 seconds
-{:ok, result} = ExMacOSControl.run_applescript(script)
-
-# Custom timeout (60 seconds)
-{:ok, result} = ExMacOSControl.run_applescript(script, timeout: 60_000)
-```
-
-### 3. App Names Are Case-Sensitive
-
-```elixir
-SystemEvents.process_exists?("safari")   # ❌ Won't work
-SystemEvents.process_exists?("Safari")   # ✅ Correct
-```
-
-### 4. Quote Escaping in AppleScript
-
-AppleScript strings need proper quote escaping:
-
-```elixir
-# ❌ BAD: Breaks AppleScript syntax
-script = ~s(display dialog "Hello "World"")
-
-# ✅ GOOD: Escape quotes
-script = ~s(display dialog "Hello \\"World\\"")
-
-# ✅ BETTER: Use triple-quoted string
-script = """
-display dialog "Hello \\"World\\""
-"""
-```
-
-### 5. Permission Prompts Block Execution
-
-When macOS prompts for permission, your script will pause:
-
-```elixir
-# First time running - macOS shows permission dialog
-# Script waits for user response
-Safari.open_url("https://example.com")
-```
-
-**Solution:** Check permissions first or inform users to expect prompts.
-
-### 6. Apps Must Be Installed
-
-Trying to control non-existent apps will fail:
-
-```elixir
-# If Safari isn't installed
-{:error, %{type: :not_found}} = Safari.open_url("https://example.com")
-```
-
-**Solution:** Check if processes exist before controlling them.
-
-## Error Handling
-
-ExMacOSControl uses structured errors. Always handle them:
-
-```elixir
-case ExMacOSControl.run_applescript(script) do
-  {:ok, result} ->
-    # Success
-    process_result(result)
-
-  {:error, %{type: :timeout}} ->
-    # Script took too long
-    Logger.warn("Script timed out")
-    {:error, :timeout}
-
-  {:error, %{type: :permission_denied}} ->
-    # Permission issue
-    Permissions.show_accessibility_help()
-    {:error, :needs_permission}
-
-  {:error, %{type: :syntax_error, message: msg}} ->
-    # AppleScript syntax error
-    Logger.error("Syntax error: #{msg}")
-    {:error, :syntax}
-
-  {:error, error} ->
-    # Other error
-    Logger.error("Automation failed: #{inspect(error)}")
-    {:error, :unknown}
-end
-```
-
-## Best Practices
-
-### 1. Use Aliases for Readability
-
-```elixir
-# Instead of repeating ExMacOSControl everywhere
-alias ExMacOSControl, as: Mac
-alias ExMacOSControl.{Safari, Finder, Mail}
-
-Mac.run_applescript(script)
-Safari.open_url(url)
-```
-
-### 2. Create Helper Modules
-
-Wrap common patterns in functions:
-
-```elixir
-defmodule BrowserHelper do
-  alias ExMacOSControl.Safari
-
-  def navigate_and_extract(url, selector) do
-    with :ok <- Safari.open_url(url),
-         :ok <- Process.sleep(2000),
-         {:ok, content} <- Safari.execute_javascript("""
-           document.querySelector('#{selector}').textContent
-         """) do
-      {:ok, String.trim(content)}
-    end
-  end
-end
-```
-
-### 3. Use Retry for Reliability
-
-```elixir
-alias ExMacOSControl.Retry
-
-# Automatically retry on timeout
-{:ok, result} = Retry.with_retry(fn ->
-  Safari.execute_javascript("document.title")
-end, max_attempts: 3)
-```
-
-### 4. Log Important Operations
-
-```elixir
-require Logger
-
-def automate do
-  Logger.info("Starting automation...")
-
-  case run_automation() do
-    {:ok, result} ->
-      Logger.info("Automation succeeded: #{result}")
-      {:ok, result}
-
-    {:error, error} ->
-      Logger.error("Automation failed: #{inspect(error)}")
-      {:error, error}
-  end
-end
-```
-
-## Troubleshooting
-
-### "Operation not permitted" Error
-
-**Cause:** Missing permissions
-
-**Solution:** Check and grant required permissions:
-
-```elixir
-Permissions.check_all()
-Permissions.open_accessibility_preferences()
-```
-
-### "Application isn't running" Error
-
-**Cause:** App isn't launched
-
-**Solution:** Launch app first:
-
-```elixir
-SystemEvents.launch_application("Safari")
-Process.sleep(1000)
-```
-
-### Timeout Errors
-
-**Cause:** Script takes longer than timeout allows
-
-**Solution:** Increase timeout:
-
-```elixir
-ExMacOSControl.run_applescript(script, timeout: 60_000)  # 60 seconds
-```
-
-### "Can't get window 1" Error
-
-**Cause:** App has no windows open
-
-**Solution:** Check window existence first:
-
-```elixir
-{:ok, window_props} = SystemEvents.get_window_properties("Safari")
-
-if is_nil(window_props) do
-  # No windows, handle accordingly
-  Safari.open_url("https://example.com")  # Opens new window
-end
-```
-
-## Next Steps
-
-Now that you're comfortable with the basics, explore:
-
-1. **[Common Patterns](common_patterns.html)** - Real-world automation workflows
-2. **[DSL vs Raw AppleScript](dsl_vs_raw.html)** - When to use the Script DSL
-3. **[Performance Guide](../performance.html)** - Optimizing your automation
-4. **[Advanced Usage](advanced_usage.html)** - Telemetry, custom adapters, and more
-
-## Quick Reference
-
-### Most Common Functions
-
-```elixir
-# AppleScript
-ExMacOSControl.run_applescript(script, timeout: 30_000)
-
-# Process Management
-SystemEvents.process_exists?("Safari")
-SystemEvents.launch_application("Safari")
-SystemEvents.quit_application("Safari")
-
-# Safari
-Safari.open_url("https://example.com")
-Safari.get_current_url()
-Safari.execute_javascript("document.title")
-
-# Finder
-Finder.get_selection()
-Finder.open_location("/path/to/folder")
-
-# Mail
-Mail.send_email(to: "user@example.com", subject: "Test", body: "Hello")
-Mail.get_unread_count()
-
-# Permissions
-Permissions.check_automation("Safari")
-Permissions.show_accessibility_help()
-```
-
-## Getting Help
-
-- **Documentation**: [https://hexdocs.pm/ex_macos_control](https://hexdocs.pm/ex_macos_control)
-- **GitHub Issues**: [Report bugs or request features](https://github.com/houllette/ex_macos_control/issues)
-- **GitHub Discussions**: [Ask questions](https://github.com/houllette/ex_macos_control/discussions)
-
-Happy automating! 🚀
+Raw script calls and legacy wrappers have no default timeout. New typed helpers
+and compositions generally default to 30 seconds; a composition uses that as a
+total budget. Pass an explicit deadline when the operation matters to a caller.
+
+After a timeout, the target app may already have changed. Check
+`error.details[:outcome]`, completed steps, and observable app state before
+another write. A timeout is not evidence that a send or creation did nothing.
+Read [captures and recovery](captures_and_recovery.md) before adding retries.
+
+## Troubleshoot
+
+| Symptom | Next check |
+| --- | --- |
+| Executable/platform error | Verify macOS with `ExMacOSControl.Platform.validate_macos/0`; check which native tool the operation needs. |
+| Permission denied | Confirm the launching host's Automation/Accessibility settings; explicitly request consent where appropriate. |
+| Safari JavaScript error | Enable JavaScript from Apple Events, verify the selector, and wait for the expected page state. |
+| App is running but data is unavailable | Running-process readiness does not guarantee that accounts, documents, or network content have loaded. |
+| Missing window/tab | Discover a fresh target; tab indices can become stale after reordering, closure, or app restart. |
+| Workflow timed out after creating something | Inspect completed results and the app before repeating the workflow. |
+
+Continue with [built-in workflows](workflows.md),
+[building your own workflows](building_workflows.md), or the
+[capability reference](../capabilities.md).

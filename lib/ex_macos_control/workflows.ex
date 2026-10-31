@@ -5,11 +5,28 @@ defmodule ExMacOSControl.Workflows do
   Sources (selection, page, message or clipboard) are captured once. Writes are
   attempted once and share a total deadline, defaulting to 30 seconds. Errors
   include acknowledged completed steps; account changes are not rolled back.
-  Mail handoffs create drafts and never send them. Every destination is explicit.
+  Mail handoffs create drafts and never send them. Messages chat IDs and Reminder
+  list IDs are explicit. Notes uses its default account/folder when folder_id is
+  omitted. Recipes do not provision accounts or install companion Shortcuts.
 
   Page captures require Safari's JavaScript from Apple Events setting. Note
   bodies are escaped HTML. Reminder and mail bodies are plain text. App-specific
   options are accepted only where documented; timeout/max_output_bytes are shared.
+
+  See [Using built-in workflows](workflows.html) for all recipes, destinations,
+  options and return values, and [Building your own workflows](building_workflows.html)
+  for custom compositions. To enable journaling or tracing across a recipe, wrap
+  it in an outer `ExMacOSControl.Composition.run/2` scope.
+
+  ## Example
+
+      # Creates a note in the default Notes folder from captured clipboard text.
+      ExMacOSControl.Workflows.clipboard_to_note("Captured text", timeout: 10_000)
+      # => {:ok, note_id}
+
+  Errors preserve completed results and may report unknown outcomes after a
+  dispatched effect. Inspect app state before repeating a failed write. Recipe
+  scopes can clean up acquired support windows, but never roll back account data.
   """
   @doc "Runs a Shortcut with the captured Finder selection as native file input."
   defdelegate selection_to_shortcut(identifier, opts \\ []), to: ExMacOSControl.Workflows.Recipes

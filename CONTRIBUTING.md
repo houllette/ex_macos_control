@@ -4,7 +4,7 @@ Thank you for your interest in contributing to ExMacOSControl! This document pro
 
 ## Code of Conduct
 
-This project adheres to a code of conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
+Keep discussions respectful and focused on the work. Report unacceptable behavior to the project maintainers.
 
 ## Getting Started
 
@@ -207,8 +207,11 @@ mix test
 # Run only unit tests (exclude integration)
 mix test --exclude integration
 
-# Run all tests including integration
+# Include native integration; desktop, Shortcut and personal tests remain excluded
 mix test --include integration
+
+# Build the README, guides and API reference with strict link checking
+mix docs --warnings-as-errors --output tmp/docs
 ```
 
 ## Pull Request Process
@@ -229,6 +232,9 @@ mix test --include integration
    - Add or update `@moduledoc`, `@doc`, and `@spec`
    - Update README.md if adding new features
    - Update CHANGELOG.md
+   - Update the relevant guide and capability reference for changed behavior
+   - Run `mix docs --warnings-as-errors --output tmp/docs`
+   - Keep implementation plans, completion notes and other temporary work under `tmp/`
 
 4. **Review your changes:**
    - Read through your diff
@@ -295,7 +301,7 @@ Your PR description should include:
 ```elixir
 @tag :integration
 test "actually runs AppleScript on macOS" do
-  {:ok, result} = ExMacOSControl.run_applescript("return 'hello'")
+  {:ok, result} = ExMacOSControl.OSAScriptAdapter.run_applescript(~s(return "hello"), timeout: 5_000)
   assert result == "hello"
 end
 ```
@@ -306,10 +312,15 @@ end
 test/
 ├── test_helper.exs          # Test configuration
 ├── ex_macos_control_test.exs
-└── ex_macos_control/
-    ├── adapter_test.exs
-    └── osascript_adapter_test.exs
+├── ex_macos_control/        # Unit and command contract tests
+├── integration/             # Native contracts and explicitly tagged desktop tests
+├── live/                    # Explicitly enabled live account/UI evidence
+└── support/                 # Repository-only mocks, fixtures and session helpers
 ```
+
+Integration does not mean every desktop/account workflow is enabled. The default
+suite excludes integration, desktop, Shortcut and personal tests. See
+[Testing](docs/testing.md) for opt-ins, consumer mock setup and live prerequisites.
 
 ## Code Style
 
@@ -339,11 +350,8 @@ test/
 
 **Example:**
 ```elixir
-def run_applescript(script) do
-  case OSAScriptAdapter.run_applescript(script) do
-    {:ok, result} -> {:ok, result}
-    {:error, reason} -> {:error, ExMacOSControl.Error.new(:execution_error, reason)}
-  end
+def run_applescript(script, opts \\ []) do
+  ExMacOSControl.run_applescript(script, opts)
 end
 ```
 

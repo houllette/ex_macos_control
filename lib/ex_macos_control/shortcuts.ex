@@ -6,10 +6,14 @@ defmodule ExMacOSControl.Shortcuts do
   JSON text, not a native shortcut dictionary. `workflow/4` uses a versioned JSON
   envelope with a user-installed workflow. `sign/3` is an explicit distribution
   operation: Apple receives the shortcut for validation during signing.
+
+  See [Integrating macOS Shortcuts](shortcuts.html) to create a companion
+  Shortcut, choose native file versus JSON text input, and define output contracts.
   """
   alias ExMacOSControl.{Automation, Command, Composition, Error, Resources, Validation}
   @app "com.apple.shortcuts.events"
 
+  @doc "Lists Shortcut IDs and metadata through Shortcuts Events. Supports folder_id, limit, offset and execution limits."
   def list(opts \\ []) do
     with :ok <- Automation.options(opts, [:folder_id, :limit, :offset, :timeout, :max_output_bytes]) do
       collection = if opts[:folder_id], do: "byId(app.folders,input.folder_id).shortcuts", else: "app.shortcuts"
@@ -30,8 +34,20 @@ defmodule ExMacOSControl.Shortcuts do
     end
   end
 
+  @doc "Lists Shortcut folders with IDs and names. Supports limit, offset and execution limits."
   def list_folders(opts \\ []), do: Resources.list(@app, "app.folders", [id: "o.id()", name: "o.name()"], %{}, opts)
 
+  @doc """
+  Runs a user-installed Shortcut by name or ID with a 30-second default deadline.
+
+  Choose `input:` (text, number or JSON-serializable map/list) or `input_paths:`
+  (existing native file paths). JSON is passed as text, not a native dictionary.
+  Options also include output_path, output_type (UTI), output, trim, timeout and
+  max_output_bytes. Output modes are :text, :json, :binary and :execution.
+  Text defaults to trimming and returns :ok for empty output; other modes return
+  {:ok, value}. A nonzero command exit returns a structured error. No retry occurs.
+  Output paths are not required to be new; choose destinations deliberately.
+  """
   def run(identifier, opts \\ []) do
     with :ok <- Automation.required_string(identifier, "Shortcut identity"),
          :ok <-
@@ -66,6 +82,7 @@ defmodule ExMacOSControl.Shortcuts do
     end
   end
 
+  @doc "Opens an installed Shortcut in the editor. Does not run it."
   def view(identifier, opts \\ []) do
     with :ok <- Automation.required_string(identifier, "Shortcut identity"),
          :ok <- Automation.options(opts, [:timeout, :max_output_bytes]) do
@@ -73,6 +90,7 @@ defmodule ExMacOSControl.Shortcuts do
     end
   end
 
+  @doc "Signs an existing exported Shortcut into a new output path. Contacts Apple; mode is :anyone or :people_who_know_me."
   def sign(input, output, opts \\ []) do
     with :ok <- Automation.options(opts, [:mode, :timeout, :max_output_bytes]),
          true <- is_binary(input) and File.regular?(input),
@@ -88,6 +106,7 @@ defmodule ExMacOSControl.Shortcuts do
     end
   end
 
+  @doc "Runs a companion Shortcut with JSON {exmc: 1, operation: operation, input: payload}; requires a version 1 result envelope."
   def workflow(identifier, operation, payload, opts \\ []) do
     with :ok <- Automation.required_string(operation, "Workflow operation"),
          :ok <- Automation.options(opts, [:timeout, :max_output_bytes]),

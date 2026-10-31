@@ -8,6 +8,21 @@ defmodule ExMacOSControl do
   - Script Files - Execute AppleScript and JXA files from disk with automatic language detection
   - Shortcuts - Execute and list macOS Shortcuts with input parameter support
 
+  App modules provide native operations; `ExMacOSControl.Workflows` supplies
+  cross-app recipes. Use `ExMacOSControl.Capture` to freeze source data and
+  `ExMacOSControl.Composition` to give custom Elixir workflows a shared deadline,
+  named effects, verification and optional journals. The optional
+  `ExMacOSControl.EventKit` transport has separate native references and consent.
+
+  Start with the [documentation index](documentation.html),
+  [workflow guide](workflows.html), or
+  [capability reference](capabilities.html).
+
+  Raw calls have no default deadline. Typed app helpers generally default to
+  30 seconds; compositions share a finite total budget. Success acknowledges a
+  command unless the specific helper independently verifies state. Timeout cannot
+  recall an Apple event already delivered, so mutations are not retried automatically.
+
   ## Examples
 
       # Execute AppleScript
@@ -390,7 +405,15 @@ defmodule ExMacOSControl do
   @spec list_shortcuts() :: {:ok, [String.t()]} | {:error, term()}
   def list_shortcuts, do: adapter().list_shortcuts()
 
-  @doc "Applies execution deadlines and output limits to app calls in the current process. Nested scopes restore prior options."
+  @doc """
+  Applies per-call execution options in the current process.
+
+  Accepts `:timeout` and `:max_output_bytes`. Explicit call options override the
+  scope, subject to an enclosing composition deadline. Nested scopes restore
+  previous options. This does not establish a total deadline for the callback
+  or automatically propagate options to child processes; use
+  `ExMacOSControl.Composition.run/2` for a shared workflow budget.
+  """
   def with_options(opts, fun) when is_function(fun, 0) do
     with :ok <- ExMacOSControl.Automation.options(opts, [:timeout, :max_output_bytes]) do
       key = {__MODULE__, :options}

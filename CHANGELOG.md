@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-31
+
+This release documents the current automation surface and adds practical workflow
+guides. Older entries below describe historical behavior; consult the
+[capability reference](docs/capabilities.md) for current support and limitations.
+
+### Current source capabilities
+
+- Cross-app workflow recipes, immutable captures, optional checksummed file
+  staging, shared composition deadlines, verification, tracing and private journals.
+- Owned Safari page scopes, selector/form helpers, document guards, verified Mail
+  drafts, application lifecycle/focus scopes, and owned GUI command windows.
+- Notes, Calendar, Reminders, Contacts, Photos, Music, TV, QuickTime, Image Events,
+  Automator, System Settings and Final Cut Pro metadata APIs.
+- Native Shortcuts IDs/folders, file input/output, typed results, pipelines and
+  versioned companion-workflow envelopes.
+- Optional EventKit helper for native Calendar events and Reminder batches with
+  separate consent and references.
+- Bounded command execution, structured outcomes, permission preflight, scripting
+  dictionary discovery and explicit live qualification/evidence workflows.
+
+### Documentation
+
+- Reconciled README and guides with implementation, including execution defaults,
+  permissions, return values, unsupported operations and partial-failure behavior.
+- Added workflow, custom composition, Shortcuts, capture/recovery and EventKit
+  guides, a documentation index, and a capability inventory.
+- Corrected extension templates and public delegate documentation; included the
+  guides and template assets in ExDoc navigation.
+
+### Current limitations
+
+- Messages unread counts return an unsupported-operation error; the old zero
+  placeholder is no longer the current contract.
+- Messages history/search requires an explicitly configured companion Shortcut.
+  No direct SQLite Messages database reader is included.
+- Dictionary declarations and native contract tests do not establish live
+  app/account compatibility. Writes are not automatically replayed or rolled back.
+
 ## [0.1.0] - 2025-11-30
 
 ### Added
@@ -99,15 +138,9 @@ None (initial release)
   - Affected files: `retry_test.exs` and `osascript_adapter_telemetry_test.exs`
   - Improves test suite performance and reduces noise in test output
 
-## [Unreleased]
-
-### Planned Features
-- Additional app modules (Music, Photos, Calendar, Contacts, Reminders, Notes, Notification Center)
-- Advanced error handling features
-- Real unread count support via SQLite database access (requires Full Disk Access)
-
 ---
 
+[0.3.0]: https://github.com/houllette/ex_macos_control/releases/tag/v0.3.0
 [0.1.2]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.2
 [0.1.1]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.1
 [0.1.0]: https://github.com/houllette/ex_macos_control/releases/tag/v0.1.0

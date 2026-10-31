@@ -2,7 +2,7 @@ defmodule ExMacosControl.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/houllette/ex_macos_control"
-  @version "0.2.0"
+  @version "0.3.0"
 
   def project do
     [
@@ -80,23 +80,33 @@ defmodule ExMacosControl.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
+      assets: %{"docs/templates" => "templates"},
       extras: [
         "README.md",
-        "CHANGELOG.md",
-        "CONTRIBUTING.md",
-        "LICENSE",
-        "docs/testing.md",
-        "docs/git_hooks.md",
+        {"docs/index.md", [filename: "documentation", title: "Documentation"]},
         "docs/guides/getting_started.md",
+        "docs/guides/workflows.md",
+        "docs/guides/building_workflows.md",
         "docs/guides/common_patterns.md",
+        "docs/guides/shortcuts.md",
+        "docs/guides/captures_and_recovery.md",
+        "docs/guides/eventkit.md",
         "docs/guides/dsl_vs_raw.md",
         "docs/guides/advanced_usage.md",
+        "docs/capabilities.md",
         "docs/performance.md",
-        "docs/creating_app_modules.md"
+        "docs/creating_app_modules.md",
+        "docs/testing.md",
+        "docs/git_hooks.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "LICENSE"
       ],
       groups_for_extras: [
+        "Start here": ~r/(README\.md|docs\/index\.md)/,
         Guides: ~r/docs\/guides\/.*/,
-        Reference: ~r/docs\/(performance|creating_app_modules).*/
+        Reference: ~r/docs\/(capabilities|performance|creating_app_modules).*/,
+        Development: ~r/(docs\/(testing|git_hooks)|CONTRIBUTING|CHANGELOG|LICENSE)/
       ],
       groups_for_modules: [
         Compositions: [
@@ -104,6 +114,7 @@ defmodule ExMacosControl.MixProject do
           ExMacOSControl.Capture.Page,
           ExMacOSControl.Capture.Text,
           ExMacOSControl.Capture.Files,
+          ExMacOSControl.Capture.StagedFiles,
           ExMacOSControl.Capture.Message,
           ExMacOSControl.Capture.Event,
           ExMacOSControl.Composition,
@@ -136,6 +147,12 @@ defmodule ExMacosControl.MixProject do
           ExMacOSControl.PropertyList,
           ExMacOSControl.Qualification,
           ExMacOSControl.Wait
+        ],
+        "Native EventKit": [
+          ExMacOSControl.EventKit,
+          ExMacOSControl.EventKit.Calendar,
+          ExMacOSControl.EventKit.Reminders,
+          ExMacOSControl.EventKit.Reference
         ],
         "App Modules": [
           ExMacOSControl.SystemEvents,
