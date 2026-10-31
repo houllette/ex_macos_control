@@ -3,6 +3,7 @@ defmodule ExMacOSControl.CompositionLiveSession do
   import ExUnit.Assertions
 
   alias ExMacOSControl.{
+    Applications,
     Automation,
     Capabilities,
     Composition,
@@ -34,6 +35,7 @@ defmodule ExMacOSControl.CompositionLiveSession do
         case: to_string(context.test),
         host: host,
         revision: String.trim(revision),
+        source_sha256: source_fingerprint(),
         apps: Map.new(apps, &{&1, app_version(&1)}),
         permissions: permission_states(apps)
       })
@@ -44,28 +46,33 @@ defmodule ExMacOSControl.CompositionLiveSession do
     end)
 
     desktop = DesktopSession.start(apps: apps, finder: context[:finder] || false)
+    Enum.each(apps, &prepare_app/1)
     session = Map.put(session, :desktop, desktop.desktop_directory)
     event(session, "started", %{test: to_string(context.test), macos: host["macos"]})
     session
   end
 
-  def effect(session, name, fun) do
+  def effect(session, name, fun, opts \\ []) do
     run_id = Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
     event(session, "intent", %{operation: name, run_id: run_id})
 
     result =
       Desktop.with_lock(fn -> Composition.effect(name, fun) end,
         journal: Path.join(session.root, "execution"),
-        run_id: run_id
+        run_id: run_id,
+        timeout: Keyword.get(opts, :timeout, 30_000)
       )
 
-    event(session, if(match?({:error, _}, result), do: "effect_failed", else: "acknowledged"), %{
+    event(session, effect_status(result, opts), %{
       operation: name,
       run_id: run_id
     })
 
     result
   end
+
+  defp effect_status({:error, _}, opts), do: if(opts[:expect_error], do: "expected_failure", else: "effect_failed")
+  defp effect_status(_result, _opts), do: "acknowledged"
 
   def create(session, kind, fun, cleanup, absent, identity \\ %{}) do
     intent = LiveEvidence.intent(session, kind, identity)
@@ -102,13 +109,25 @@ defmodule ExMacOSControl.CompositionLiveSession do
 
   defdelegate event(session, event, data \\ %{}), to: LiveEvidence
 
-  def absent(bundle, collection, id), do: query(bundle, "return !app.#{collection}.byId(input.id).exists();", %{id: id})
+  def absent(bundle, collection, id) do
+    with {:ok, _} <- Applications.ensure_running(bundle, timeout: 5000),
+         do: query(bundle, "var ids=app.#{collection}.id();return !ids || ids.indexOf(input.id)<0;", %{id: id})
+  end
 
   defp app_version(identity) do
     case Capabilities.app(identity) do
       {:ok, app} -> Map.take(app, [:bundle_id, :version, :build])
       _ -> %{status: :unavailable}
     end
+  end
+
+  defp source_fingerprint do
+    ["lib/**/*.{ex,exs}", "test/**/*.{ex,exs}"]
+    |> Enum.flat_map(&Path.wildcard/1)
+    |> Enum.sort()
+    |> Enum.map(fn path -> [path, <<0>>, File.read!(path), <<0>>] end)
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   defp permission_states(apps) do
@@ -123,4 +142,9 @@ defmodule ExMacOSControl.CompositionLiveSession do
   defp permission_state({:ok, state}), do: state
   defp permission_state({:error, _}), do: :error
   defp permission_state(state) when is_atom(state), do: state
+
+  defp prepare_app(identity) when identity in ["com.apple.reminders", "com.apple.iCal"],
+    do: assert({:ok, _} = Applications.open(identity, background: true, timeout: 15_000))
+
+  defp prepare_app(identity), do: assert({:ok, _} = Applications.ensure_running(identity, timeout: 15_000))
 end

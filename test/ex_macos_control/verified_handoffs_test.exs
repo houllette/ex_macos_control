@@ -80,6 +80,31 @@ defmodule ExMacOSControl.VerifiedHandoffsTest do
     assert {:error, %Error{}} = Mail.create_verified_draft(to: [], subject: "Title", body: "Body")
   end
 
+  test "attachment verification freezes file metadata before creation even if the source disappears" do
+    root = Path.expand("tmp/draft-attachment-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+    path = Path.join(root, "fixture.txt")
+    File.write!(path, "abc")
+    on_exit(fn -> File.rm_rf!(root) end)
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response([]) end)
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ ->
+      File.rm!(path)
+      {:ok, "999"}
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      assert input(opts)["attachments"] == [%{"name" => "fixture.txt", "size" => 3}]
+      response([%{id: 2, message_id: "saved"}])
+    end)
+
+    assert {:ok, %Draft{id: 2}} =
+             Mail.create_verified_draft(to: "self@example.invalid", subject: "Title", body: "Body", attachments: [path])
+
+    assert {:error, _} =
+             Mail.create_verified_draft(to: "self@example.invalid", subject: "Title", body: "Body", attachments: nil)
+  end
+
   defp input(opts), do: opts[:args] |> hd() |> Jason.decode!()
   defp response(value), do: {:ok, Jason.encode!(%{exmc: 1, result: value})}
 end

@@ -441,7 +441,14 @@ defmodule ExMacOSControl.Safari do
   defp tab_query(window_id, index, body, params, opts) when is_integer(index) and index > 0 do
     ExMacOSControl.Automation.query(
       "com.apple.Safari",
-      "var w=byId(app.windows,input.window_id),t=w.tabs[input.index-1];if(!t.exists())throw new Error('Tab not found');#{body}",
+      """
+      var windows=app.windows(),w=null;
+      for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
+      if(!w)throw new Error('Safari window not found');
+      var tabs=w.tabs(),t=tabs&&tabs[input.index-1];
+      if(!t)throw new Error('Tab not found');
+      #{body}
+      """,
       Map.merge(params, %{window_id: window_id, index: index}),
       opts
     )

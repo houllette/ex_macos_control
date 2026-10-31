@@ -7,7 +7,7 @@ defmodule ExMacOSControl.Applications do
   `with_frontmost/3` serializes foreground work and restores the previous app
   when it still exists; it never quits an application.
   """
-  alias ExMacOSControl.{Automation, Composition, Desktop, Wait}
+  alias ExMacOSControl.{Automation, Command, Composition, Desktop, Error, Wait}
 
   @doc "Resolves an installed application and reports its running process without launching it."
   def status(identity, opts \\ []) do
@@ -42,6 +42,39 @@ defmodule ExMacOSControl.Applications do
       fn -> do_ensure_running(identity) end,
       opts
     )
+  end
+
+  @doc """
+  Opens or reopens the application's normal UI through LaunchServices and waits
+  for its process. background: true preserves foreground ownership. This supports
+  apps that automatically terminate after a launch-only start without windows.
+  Returns the running identity and PID.
+  """
+  def open(identity, opts \\ []) do
+    with :ok <- Automation.options(opts, [:background, :timeout, :max_output_bytes, :trace_to, :journal, :run_id]),
+         true <- is_boolean(Keyword.get(opts, :background, false)) do
+      Desktop.with_lock(fn -> do_open(identity, opts) end, Keyword.delete(opts, :background))
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("background must be a boolean")
+    end
+  end
+
+  defp do_open(identity, opts) do
+    with {:ok, app} <- Composition.step(:application_status, fn -> status(identity) end),
+         :ok <- Composition.effect(:open_application, fn -> launch_ui(app.path, opts) end) do
+      ensure_running(app.bundle_id)
+    end
+  end
+
+  defp launch_ui(path, opts) do
+    args = if opts[:background], do: ["-g", "-a", path], else: ["-a", path]
+
+    case Command.run("open", args, ExMacOSControl.execution_options()) do
+      {:ok, %{exit_status: 0}} -> :ok
+      {:ok, result} -> {:error, Error.execution_error("Application open failed", exit_status: result.exit_status)}
+      error -> error
+    end
   end
 
   @doc "Ensures an app is running, activates it, and verifies foreground ownership by PID."

@@ -80,6 +80,29 @@ defmodule ExMacOSControl.SafariCompositionsTest do
     assert :ok = Safari.navigate_and_wait(page, "https://example.invalid/new", interval: 1)
   end
 
+  test "same-URL navigation reloads and never accepts the previous document as ready" do
+    page = %Page{window_id: 4, tab_index: 1}
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response("https://example.invalid/same") end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      assert input(opts)["code"] =~ "location.reload()"
+      response(true)
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      code = input(opts)["code"]
+      assert code =~ ~s(\\"same_document\\":false)
+      response(false)
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(true) end)
+    assert :ok = Safari.navigate_and_wait(page, "https://example.invalid/same", interval: 1)
+  end
+
+  test "an empty final form selector is rejected before editing the first field" do
+    assert {:error, _} = Safari.fill_fields(%Page{window_id: 4, tab_index: 1}, [{"#valid", "text"}, {"", "invalid"}])
+  end
+
   test "a failed action with unknown outcome is returned after a single click" do
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(true) end)
 

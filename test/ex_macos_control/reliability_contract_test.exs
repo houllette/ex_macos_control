@@ -157,6 +157,91 @@ defmodule ExMacOSControl.ReliabilityContractTest do
     assert Enum.any?(error.details.run_completed, &(&1.result == "event"))
   end
 
+  test "Calendar null optional fields verify equivalently to requested empty strings" do
+    attrs = [start_at: "2026-11-02T12:00:00Z", end_at: "2026-11-02T13:00:00Z"]
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(%{title: "task", body: nil}) end)
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response("event") end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+      response(%{
+        title: "task",
+        description: nil,
+        start_at: "2026-11-02T12:00:00.000Z",
+        end_at: "2026-11-02T13:00:00.000Z"
+      })
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(true) end)
+
+    assert {:ok, _} =
+             Workflows.reminder_to_event("reminder", "calendar", attrs, verify_event: true, complete_reminder: true)
+  end
+
+  test "explicit reminder lists scope reads and completion without scanning other accounts" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      assert source =~ "byId(app.lists,input.list_id).reminders"
+      assert input(opts)["list_id"] == "owned-list"
+      response(%{id: "reminder", title: "Task"})
+    end)
+
+    assert {:ok, %{id: "reminder"}} = Reminders.get_reminder("reminder", list_id: "owned-list")
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      assert source =~ "byId(app.lists,input.list_id).reminders"
+      assert input(opts)["list_id"] == "owned-list"
+      response(true)
+    end)
+
+    assert :ok = Reminders.delete_reminder("reminder", list_id: "owned-list")
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn source, opts ->
+      assert source =~ "set completed of reminder id (wantedID as text) of targetList to true"
+      assert opts[:args] == ["owned-list", "reminder"]
+      {:ok, "1"}
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(true) end)
+
+    assert {:ok, ["reminder"]} = Reminders.complete_many(["reminder"], list_id: "owned-list")
+    assert {:error, _} = Reminders.complete_many(["reminder"], list_id: "")
+    assert {:error, _} = Reminders.complete_many(["reminder", "reminder"], list_id: "owned-list")
+  end
+
+  test "missing scoped reminders prevent mutation and do not trigger verification" do
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ -> {:ok, "EXMC_MISSING"} end)
+    assert {:error, %{details: %{outcome: :not_started}}} = Reminders.complete_many(["missing"], list_id: "list")
+  end
+
+  test "native preflight timeouts remain distinct from missing IDs" do
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ -> {:ok, "EXMC_PREFLIGHT:-1712"} end)
+
+    assert {:error, %{type: :timeout, details: %{outcome: :not_started}}} =
+             Reminders.complete_many(["id"], list_id: "list")
+  end
+
+  test "large scoped completion retains confirmed chunks and stops after an uncertain chunk", %{journal: journal} do
+    ids = Enum.map(1..25, &"reminder-#{&1}")
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, opts ->
+      assert opts[:args] == ["list" | Enum.take(ids, 10)]
+      {:ok, "10"}
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(true) end)
+
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, opts ->
+      assert opts[:args] == ["list" | Enum.slice(ids, 10, 10)]
+      {:error, Error.timeout("reply lost after completion", outcome: :unknown)}
+    end)
+
+    assert {:error, error} = Composition.run(fn -> Reminders.complete_many(ids, list_id: "list") end, journal: journal)
+    assert error.details.recovery_status == :needs_reconciliation
+    assert {:ok, summary} = Journal.inspect_run(error.details.journal_path)
+    assert Enum.map(summary.resources, & &1["id"]) == Enum.take(ids, 10)
+    assert Enum.any?(summary.pending, &(get_in(&1, ["resource", "identity", "ids"]) == Enum.slice(ids, 10, 10)))
+    refute Jason.encode!(summary.events) =~ "reminder-25"
+  end
+
   defp input(opts), do: opts[:args] |> hd() |> Jason.decode!()
   defp response(value), do: {:ok, Jason.encode!(%{exmc: 1, result: value})}
 end

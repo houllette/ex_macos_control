@@ -55,20 +55,30 @@ defmodule ExMacOSControl.LiveEvidence do
 
   def cleanup(session, intent, cleanup, verify, opts \\ [timeout: 15_000, interval: 100]) do
     event(session, "cleanup_intent", %{intent_id: intent})
-    result = attempt_cleanup(cleanup, verify, opts)
+    command = if is_function(verify, 0), do: attempt_cleanup(cleanup), else: {:error, :missing_absence_verifier}
+    event(session, if(command == :ok, do: "cleanup_acknowledged", else: "cleanup_uncertain"), %{intent_id: intent})
+    result = observe_absence(verify, opts)
     event(session, if(result == :ok, do: "cleanup_verified", else: "cleanup_failed"), %{intent_id: intent})
     result
   end
 
-  defp attempt_cleanup(cleanup, verify, opts) when is_function(verify, 0) do
-    with :ok <- cleanup.(), do: ExMacOSControl.Wait.until(verify, opts)
+  defp attempt_cleanup(cleanup) do
+    cleanup.()
   rescue
     _ -> {:error, :cleanup_raised}
   catch
     _, _ -> {:error, :cleanup_exited}
   end
 
-  defp attempt_cleanup(_cleanup, _verify, _opts), do: {:error, :missing_absence_verifier}
+  defp observe_absence(verify, opts) when is_function(verify, 0) do
+    ExMacOSControl.Wait.until(verify, opts)
+  rescue
+    _ -> {:error, :observation_raised}
+  catch
+    _, _ -> {:error, :observation_exited}
+  end
+
+  defp observe_absence(_verify, _opts), do: {:error, :missing_absence_verifier}
 
   defp decode(text) do
     text

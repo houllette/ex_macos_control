@@ -195,24 +195,31 @@ defmodule ExMacOSControl.Composition do
 
   defp valid_identity?(identity) when is_map(identity) do
     map_size(identity) <= 10 and
-      Enum.all?(identity, fn {key, value} ->
-        key in [
-          :id,
-          :parent_id,
-          :account_id,
-          :calendar_id,
-          :list_id,
-          :window_id,
-          :tab_index,
-          :path,
-          :source_path,
-          :index
-        ] and
-          (is_integer(value) or (is_binary(value) and byte_size(value) <= 4096))
-      end)
+      Enum.all?(identity, &valid_identity_field?/1)
   end
 
   defp valid_identity?(_), do: false
+
+  defp valid_identity_field?({:ids, values}) when is_list(values),
+    do: length(values) in 1..1000 and Enum.all?(values, &identity_value?/1)
+
+  defp valid_identity_field?({key, value}) do
+    key in [
+      :id,
+      :parent_id,
+      :account_id,
+      :calendar_id,
+      :list_id,
+      :window_id,
+      :tab_index,
+      :path,
+      :source_path,
+      :index
+    ] and
+      identity_value?(value)
+  end
+
+  defp identity_value?(value), do: is_integer(value) or (is_binary(value) and byte_size(value) <= 4096)
 
   @doc "Polls observable state and records a confirmed outcome only after the predicate succeeds."
   def verify(name, predicate, opts \\ []) do

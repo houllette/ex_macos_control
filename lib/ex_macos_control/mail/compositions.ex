@@ -4,27 +4,28 @@ defmodule ExMacOSControl.Mail.Compositions do
   alias ExMacOSControl.Mail.Draft
 
   def create(opts) do
-    with :ok <- validate(opts) do
-      Desktop.with_lock(fn -> create_workflow(opts) end, Keyword.take(opts, [:timeout, :max_output_bytes]))
+    with :ok <- validate(opts),
+         {:ok, files} <- attachment_snapshot(Keyword.get(opts, :attachments, [])) do
+      Desktop.with_lock(fn -> create_workflow(opts, files) end, Keyword.take(opts, [:timeout, :max_output_bytes]))
     end
   end
 
-  defp create_workflow(opts) do
-    Composition.effect(:create_verified_draft, fn -> create_and_verify(opts) end, resource: :draft)
+  defp create_workflow(opts, files) do
+    Composition.effect(:create_verified_draft, fn -> create_and_verify(opts, files) end, resource: :draft)
   end
 
-  defp create_and_verify(opts) do
+  defp create_and_verify(opts, files) do
     with {:ok, before} <- Composition.step(:existing_drafts, fn -> matching_ids(opts[:subject]) end),
          {:ok, outgoing} <- Composition.effect(:create_draft, &Mail.create_draft/1, [opts]) do
-      await_saved(before, outgoing, opts)
+      await_saved(before, outgoing, opts, files)
     end
   end
 
-  defp await_saved(before, outgoing, opts) do
+  defp await_saved(before, outgoing, opts, files) do
     key = make_ref()
 
     try do
-      predicate = &observe_saved(before, opts, key, &1)
+      predicate = &observe_saved(before, opts, files, key, &1)
 
       case Composition.verify(:saved_draft, predicate) do
         :ok ->
@@ -47,7 +48,7 @@ defmodule ExMacOSControl.Mail.Compositions do
     end
   end
 
-  defp observe_saved(before, opts, key, remaining) do
+  defp observe_saved(before, opts, files, key, remaining) do
     params = %{
       before: before,
       subject: opts[:subject],
@@ -56,10 +57,7 @@ defmodule ExMacOSControl.Mail.Compositions do
       cc: Enum.map(Keyword.get(opts, :cc, []), &String.downcase(String.trim(&1))),
       bcc: Enum.map(Keyword.get(opts, :bcc, []), &String.downcase(String.trim(&1))),
       sender: opts[:sender] || opts[:from],
-      attachments:
-        Enum.map(Keyword.get(opts, :attachments, []), fn path ->
-          %{name: Path.basename(path), size: File.stat!(path).size}
-        end)
+      attachments: files
     }
 
     case Automation.query(
@@ -104,6 +102,26 @@ defmodule ExMacOSControl.Mail.Compositions do
         "return app.draftsMailbox().messages.whose({subject:input.subject})().map(function(o){return o.id();});",
         %{subject: subject}
       )
+
+  defp attachment_snapshot(paths) when is_list(paths) do
+    Enum.reduce_while(paths, {:ok, []}, fn path, {:ok, files} ->
+      case attachment_info(path) do
+        {:ok, file} -> {:cont, {:ok, files ++ [file]}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp attachment_snapshot(_), do: Automation.invalid("Attachments must be a list of existing files")
+
+  defp attachment_info(path) when is_binary(path) do
+    case File.stat(path) do
+      {:ok, %{type: :regular, size: size}} -> {:ok, %{name: Path.basename(path), size: size}}
+      _ -> Automation.invalid("An attachment file is unavailable")
+    end
+  end
+
+  defp attachment_info(_), do: Automation.invalid("Attachment paths must be strings")
 
   def get(%Draft{} = draft, opts) do
     Automation.query(

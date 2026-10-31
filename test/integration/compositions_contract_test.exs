@@ -1,7 +1,7 @@
 defmodule ExMacOSControl.CompositionsContractTest do
   use ExUnit.Case, async: true
   import Mox
-  alias ExMacOSControl.{Applications, ImageEvents, OSAScriptAdapter, Safari, Script}
+  alias ExMacOSControl.{Applications, ImageEvents, OSAScriptAdapter, Reminders, Safari, Script}
   alias ExMacOSControl.Safari.Page
   @moduletag :integration
   setup :verify_on_exit!
@@ -23,10 +23,9 @@ defmodule ExMacOSControl.CompositionsContractTest do
       if(selector==='#text')return {textContent:#{Jason.encode!(text)},getAttribute:function(){return 'attribute';}};
       return null;
     }};
+    document.querySelectorAll=function(selector){var e=document.querySelector(selector);return e?[e]:[];};
     var tab={exists:function(){return true;}};
-    var fixture={windows:{byId:function(id){
-      if(id!==42)throw new Error('Wrong target');return {exists:function(){return true;},tabs:[tab]};
-    }},doJavaScript:function(code,options){
+    var fixture={windows:function(){return [{id:function(){return 42;},tabs:function(){return [tab];}}];},doJavaScript:function(code,options){
       if(options.in!==tab)throw new Error('Wrong tab');
       // Each native execution starts with a fresh fixture. The verification
       // query sees the committed field value from the preceding action.
@@ -54,13 +53,84 @@ defmodule ExMacOSControl.CompositionsContractTest do
 
   test "owned window cleanup refuses to close unrelated added tabs" do
     stub_native("""
-    var fixture={windows:{byId:function(){return {exists:function(){return true;},tabs:[{},{}]};}},
+    var fixture={windows:function(){return [{id:function(){return 42;},tabs:function(){return [{},{}];}}];},
       close:function(){throw new Error('Must not close unrelated tabs');}};
     """)
 
     assert {:error, error} = Safari.close_page(%Page{window_id: 42, tab_index: 1, owned: true})
     assert error.message =~ "additional tabs"
     refute error.message =~ "Must not close"
+  end
+
+  test "closing an already closed owned window is a no-op despite stale native specifiers" do
+    stub_native("""
+    var fixture={windows:function(){return [];},close:function(){throw new Error('Must not close another window');}};
+    """)
+
+    assert :ok = Safari.close_page(%Page{window_id: 42, tab_index: 1, owned: true})
+  end
+
+  test "stale DOM targets cannot fall through to another window" do
+    stub_native("""
+    var fixture={windows:function(){return [{id:function(){return 99;},tabs:function(){return [{}];}}];},
+      doJavaScript:function(){throw new Error('Must not inspect another window');}};
+    """)
+
+    assert {:error, error} = Safari.text(%Page{window_id: 42, tab_index: 1}, "#field")
+    assert error.message =~ "Safari window not found"
+    refute error.message =~ "Must not inspect"
+  end
+
+  test "native closed-window placeholders with null tabs are never operated on" do
+    stub_native("""
+    var fixture={windows:function(){return [{id:function(){return 42;},tabs:function(){return null;}}];},
+      close:function(){throw new Error('Must not close a placeholder');},
+      doJavaScript:function(){throw new Error('Must not inspect a placeholder');}};
+    """)
+
+    assert :ok = Safari.close_page(%Page{window_id: 42, tab_index: 1, owned: true})
+    assert {:error, error} = Safari.text(%Page{window_id: 42, tab_index: 1}, "#field")
+    assert error.message =~ "no tabs"
+  end
+
+  test "reminder paging uses bulk columns and preserves dates and booleans" do
+    stub_native("""
+    var values={id:['first','second'],name:['First','Second'],body:[null,'Body'],completed:[false,true],
+      dueDate:[null,new Date('2026-11-01T12:00:00Z')],remindMeDate:[null,null],priority:[0,2],flagged:[false,false]};
+    var reminders={};Object.keys(values).forEach(function(k){reminders[k]=function(){return values[k];};});
+    var fixture={lists:{byId:function(id){if(id!=='owned-list')throw new Error('Wrong list');return {
+      exists:function(){return true;},reminders:reminders};}}};
+    """)
+
+    assert {:ok,
+            [
+              %{
+                id: "second",
+                title: "Second",
+                completed: true,
+                flagged: false,
+                due_at: "2026-11-01T12:00:00.000Z",
+                reminder_at: nil
+              }
+            ]} = Reminders.list_reminders("owned-list", limit: 1, offset: 1)
+  end
+
+  test "scoped reminder completion compiles explicit ID references and independently verifies native flags" do
+    expect(ExMacOSControl.AdapterMock, :run_applescript, fn source, opts ->
+      assert opts[:args] == ["owned-list", "first", "second"]
+      assert source =~ "set knownIDs to id of every reminder of targetList"
+      assert source =~ "set completed of reminder id (wantedID as text) of targetList to true"
+      assert source =~ "return \"EXMC_MISSING\""
+      assert :ok = Script.validate(source)
+      {:ok, "2"}
+    end)
+
+    stub_native("""
+    var fixture={lists:{byId:function(){return {exists:function(){return true;},reminders:{
+      id:function(){return ['first','second','untouched'];},completed:function(){return [true,true,false];}}};}}};
+    """)
+
+    assert {:ok, ["first", "second"]} = Reminders.complete_many(["first", "second"], list_id: "owned-list")
   end
 
   test "image operations preserve order and save once in the native engine" do
