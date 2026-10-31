@@ -87,8 +87,14 @@ defmodule ExMacOSControl.Finder.Compositions do
   end
 
   defp do_transfer(paths, destination, operation, outputs) do
-    Composition.map(Enum.zip(paths, outputs), operation, fn {path, output} ->
-      with :ok <- apply(Finder, operation, [path, destination]), do: {:ok, output}
-    end)
+    Composition.map_effects(
+      Enum.zip(paths, outputs),
+      operation,
+      fn {path, output} ->
+        with :ok <- apply(Finder, operation, [path, destination]), do: {:ok, output}
+      end,
+      resource: :file,
+      identity: fn {path, output} -> %{source_path: path, path: output} end
+    )
   end
 end

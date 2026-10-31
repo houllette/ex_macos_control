@@ -4,7 +4,7 @@ defmodule ExMacOSControl.Wait do
 
   def until(predicate, opts \\ []) when is_function(predicate) do
     with :ok <- Automation.options(opts, [:timeout, :interval]),
-         effective = Keyword.merge(Keyword.take(ExMacOSControl.execution_options(), [:timeout]), opts),
+         effective = ExMacOSControl.execution_options(Keyword.take(opts, [:timeout])),
          timeout = Keyword.get(effective, :timeout, 5000),
          interval = Keyword.get(opts, :interval, 50),
          true <- is_integer(timeout) and timeout >= 0 and is_integer(interval) and interval > 0 do
@@ -16,7 +16,16 @@ defmodule ExMacOSControl.Wait do
   end
 
   defp poll(predicate, deadline, interval) do
-    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 or ExMacOSControl.Composition.remaining() == 0 do
+      {:error, Error.timeout("Waiting for state", outcome: :not_started)}
+    else
+      evaluate(predicate, deadline, interval, remaining)
+    end
+  end
+
+  defp evaluate(predicate, deadline, interval, remaining) do
     result = if is_function(predicate, 1), do: predicate.(remaining), else: predicate.()
 
     case result do

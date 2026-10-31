@@ -646,7 +646,10 @@ defmodule ExMacOSControl.Mail do
   defp do_save_attachments(account_id, mailbox, id, destination) do
     with {:ok, message} <- Composition.step(:read_message, fn -> get_message(account_id, mailbox, id) end),
          {:ok, outputs} <- attachment_outputs(message.attachments, destination) do
-      Composition.map(outputs, :save_attachment, &save_one_attachment(account_id, mailbox, id, &1))
+      Composition.map_effects(outputs, :save_attachment, &save_one_attachment(account_id, mailbox, id, &1),
+        resource: :file,
+        identity: fn {index, path} -> %{path: path, index: index, parent_id: id, account_id: account_id} end
+      )
     end
   end
 

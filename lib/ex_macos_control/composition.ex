@@ -15,9 +15,11 @@ defmodule ExMacOSControl.Composition do
   ExMacOSControl.Composition.Journal.inspect_run/1. :acknowledged means a command
   returned successfully; verify/3 records :confirmed after observing state.
 
-  `step/2` never retries. Errors retain their original type and outcome, and add
+  `step/2` never retries. Errors retain their original type and add
   `details.composition` with the failed step and acknowledged completed results.
-  These results can contain private application data. Effects are not rolled back.
+  These results can contain private application data. Dispatched effect errors
+  report outcome :unknown unless explicitly :not_started. Errors include run_id
+  and journal_path when available. Effects are not rolled back.
   `Retry.with_retry/2` requires explicit idempotence to retry composition timeouts.
 
   Scoped resources receive a separate, bounded five-second cleanup budget, even
@@ -57,6 +59,7 @@ defmodule ExMacOSControl.Composition do
         journal: journal,
         trace_to: Keyword.get(opts, :trace_to, previous && previous.trace_to),
         span_id: previous && previous.span_id,
+        progress: if(previous, do: previous.progress, else: :atomics.new(2, [])),
         execution: Keyword.take(effective, @execution)
       }
 
@@ -129,17 +132,87 @@ defmodule ExMacOSControl.Composition do
   def effect(name, fun, opts \\ [])
 
   def effect(name, fun, opts) when is_function(fun, 0) do
-    with :ok <- Automation.options(opts, [:resource]),
-         true <- is_nil(opts[:resource]) or is_atom(opts[:resource]) do
-      Trace.step(Context.current(), name, fun, :effect, opts[:resource]) |> normalize_step(name)
-    else
-      {:error, _} = error -> error
-      _ -> Automation.invalid("Resource type must be an atom")
+    with :ok <- effect_options(opts) do
+      resource = if opts == [], do: nil, else: %{type: opts[:resource], identity: Keyword.get(opts, :identity, %{})}
+      Trace.step(Context.current(), name, fun, :effect, resource) |> normalize_step(name)
     end
   end
 
   def effect(name, fun, args) when is_function(fun) and is_list(args),
     do: effect(name, fn -> apply(fun, args) end)
+
+  @doc """
+  Maps mutations sequentially with durable effect intents. Options are resource
+  (an atom) and identity (a map or item-to-map function). Identity fields are
+  explicitly persisted native IDs/paths; do not include content. All identity
+  maps are validated before the first callback. Results are never replayed.
+  """
+  def map_effects(items, name, fun, opts \\ []) when is_list(items) and is_function(fun, 1) do
+    with :ok <- Automation.options(opts, [:resource, :identity]),
+         prepared = Enum.map(items, fn item -> {item, identity_options(item, opts)} end),
+         :ok <- ExMacOSControl.Validation.all(prepared, fn {_, options} -> effect_options(options) end) do
+      if Context.current(),
+        do: do_map_effects(prepared, name, fun),
+        else: run(&do_map_effects/3, [prepared, name, fun], [])
+    end
+  end
+
+  defp identity_options(item, opts) do
+    case opts[:identity] do
+      identity when is_function(identity, 1) -> Keyword.put(opts, :identity, identity.(item))
+      _ -> opts
+    end
+  end
+
+  defp do_map_effects(items, name, fun) do
+    items
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, &reduce_effect(&1, &2, name, fun))
+    |> case do
+      {:ok, results} -> {:ok, Enum.reverse(results)}
+      error -> error
+    end
+  end
+
+  defp reduce_effect({{item, opts}, index}, {:ok, results}, name, fun) do
+    case effect({name, index}, fn -> fun.(item) end, opts) do
+      :ok -> {:cont, {:ok, [:ok | results]}}
+      {:ok, value} -> {:cont, {:ok, [value | results]}}
+      error -> {:halt, error}
+    end
+  end
+
+  defp effect_options(opts) do
+    with :ok <- Automation.options(opts, [:resource, :identity]),
+         true <- is_nil(opts[:resource]) or is_atom(opts[:resource]),
+         true <- valid_identity?(Keyword.get(opts, :identity, %{})) do
+      :ok
+    else
+      {:error, _} = error -> error
+      _ -> Automation.invalid("Effect resource and native identity are invalid")
+    end
+  end
+
+  defp valid_identity?(identity) when is_map(identity) do
+    map_size(identity) <= 10 and
+      Enum.all?(identity, fn {key, value} ->
+        key in [
+          :id,
+          :parent_id,
+          :account_id,
+          :calendar_id,
+          :list_id,
+          :window_id,
+          :tab_index,
+          :path,
+          :source_path,
+          :index
+        ] and
+          (is_integer(value) or (is_binary(value) and byte_size(value) <= 4096))
+      end)
+  end
+
+  defp valid_identity?(_), do: false
 
   @doc "Polls observable state and records a confirmed outcome only after the predicate succeeds."
   def verify(name, predicate, opts \\ []) do
@@ -265,6 +338,12 @@ defmodule ExMacOSControl.Composition do
 
     details =
       Map.update(error.details || %{}, :composition, failure, fn cause -> Map.put(failure, :cause, cause) end)
+
+    details =
+      case Context.current() do
+        nil -> details
+        current -> Map.merge(details, %{run_id: current.run_id, journal_path: current.journal && current.journal.path})
+      end
 
     {:error, %{error | details: details}}
   end

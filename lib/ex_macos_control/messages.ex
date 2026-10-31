@@ -449,7 +449,15 @@ defmodule ExMacOSControl.Messages do
     with :ok <- Validation.items(ids),
          :ok <- Validation.all(ids, &Automation.required_string(&1, "Chat ID")),
          :ok <- Automation.required_string(text, "Message text") do
-      Composition.run(fn -> Composition.map(ids, :send_message, &send_one_chat(&1, text)) end, opts)
+      Composition.run(
+        fn ->
+          Composition.map_effects(ids, :send_message, &send_one_chat(&1, text),
+            resource: :chat,
+            identity: fn id -> %{id: id} end
+          )
+        end,
+        opts
+      )
     end
   end
 
@@ -464,7 +472,15 @@ defmodule ExMacOSControl.Messages do
     with :ok <- Automation.required_string(id, "Chat ID"),
          :ok <- Validation.items(paths),
          true <- Enum.all?(paths, &(is_binary(&1) and File.regular?(&1))) do
-      Composition.run(fn -> Composition.map(paths, :send_file, &send_one_file(id, &1)) end, opts)
+      Composition.run(
+        fn ->
+          Composition.map_effects(paths, :send_file, &send_one_file(id, &1),
+            resource: :file,
+            identity: fn path -> %{path: Path.expand(path), parent_id: id} end
+          )
+        end,
+        opts
+      )
     else
       {:error, _} = error -> error
       _ -> Automation.invalid("Message files must exist")

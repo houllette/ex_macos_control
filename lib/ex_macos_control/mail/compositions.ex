@@ -1,11 +1,11 @@
 defmodule ExMacOSControl.Mail.Compositions do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Error, Mail}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Error, Mail}
   alias ExMacOSControl.Mail.Draft
 
   def create(opts) do
     with :ok <- validate(opts) do
-      Composition.run(&create_workflow/1, [opts], Keyword.take(opts, [:timeout, :max_output_bytes]))
+      Desktop.with_lock(fn -> create_workflow(opts) end, Keyword.take(opts, [:timeout, :max_output_bytes]))
     end
   end
 
@@ -53,18 +53,30 @@ defmodule ExMacOSControl.Mail.Compositions do
       subject: opts[:subject],
       body: opts[:body],
       recipients: List.wrap(opts[:to]) |> Enum.map(&String.downcase(String.trim(&1))),
-      attachments: Enum.map(Keyword.get(opts, :attachments, []), &Path.basename/1)
+      cc: Enum.map(Keyword.get(opts, :cc, []), &String.downcase(String.trim(&1))),
+      bcc: Enum.map(Keyword.get(opts, :bcc, []), &String.downcase(String.trim(&1))),
+      sender: opts[:sender] || opts[:from],
+      attachments:
+        Enum.map(Keyword.get(opts, :attachments, []), fn path ->
+          %{name: Path.basename(path), size: File.stat!(path).size}
+        end)
     }
 
     case Automation.query(
            "com.apple.mail",
            """
+           function address(s){var m=String(s).match(/<([^<>]+)>\\s*$/);return (m?m[1]:String(s)).trim().toLowerCase();}
+           function addresses(values){return values.map(address).sort();}
+           function text(s){return String(s).replace(/\\r\\n?/g,'\\n').replace(/\\uFFFC/g,'').split('\\n').map(function(s){return s.replace(/[ \\t]+$/,'');}).join('\\n').trim();}
+           function attachments(values){return values.sort(function(a,b){return a.name.localeCompare(b.name)||a.size-b.size;});}
            return app.draftsMailbox().messages.whose({subject:input.subject})().filter(function(o){
-             if(input.before.indexOf(o.id())>=0||o.content().indexOf(input.body)<0)return false;
-             var recipients=o.toRecipients.address().map(function(s){return s.trim().toLowerCase();}).sort();
-             var attachments=o.mailAttachments.name().sort();
-             return JSON.stringify(recipients)===JSON.stringify(input.recipients.sort()) &&
-               JSON.stringify(attachments)===JSON.stringify(input.attachments.sort());
+             if(input.before.indexOf(o.id())>=0 || text(o.content())!==text(input.body))return false;
+             if(input.sender && address(o.sender())!==address(input.sender))return false;
+             var files=o.mailAttachments().map(function(a){return {name:a.name(),size:a.fileSize()};});
+             return JSON.stringify(addresses(o.toRecipients.address()))===JSON.stringify(input.recipients.sort()) &&
+               JSON.stringify(addresses(o.ccRecipients.address()))===JSON.stringify(input.cc.sort()) &&
+               JSON.stringify(addresses(o.bccRecipients.address()))===JSON.stringify(input.bcc.sort()) &&
+               JSON.stringify(attachments(files))===JSON.stringify(attachments(input.attachments));
            }).map(function(o){return {id:o.id(),message_id:o.messageId()};});
            """,
            params,

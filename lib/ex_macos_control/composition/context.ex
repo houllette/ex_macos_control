@@ -5,7 +5,7 @@ defmodule ExMacOSControl.Composition.Context do
   locks and completed-result lists are never transferred.
   """
   @enforce_keys [:deadline, :run_id]
-  defstruct [:deadline, :run_id, :trace_to, :journal, :span_id, completed: [], execution: []]
+  defstruct [:deadline, :run_id, :trace_to, :journal, :span_id, :progress, completed: [], execution: []]
   @key {ExMacOSControl.Composition, :context}
   def current, do: Process.get(@key)
 

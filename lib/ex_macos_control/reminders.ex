@@ -97,7 +97,15 @@ defmodule ExMacOSControl.Reminders do
     with :ok <- Automation.required_string(list_id, "List ID"),
          :ok <- Validation.items(items),
          :ok <- Validation.all(items, &validate_reminder/1) do
-      Composition.run(fn -> Composition.map(items, :create_reminder, &create_reminder(list_id, &1)) end, opts)
+      Composition.run(
+        fn ->
+          Composition.map_effects(items, :create_reminder, &create_reminder(list_id, &1),
+            resource: :reminder,
+            identity: %{list_id: list_id}
+          )
+        end,
+        opts
+      )
     end
   end
 
@@ -128,8 +136,14 @@ defmodule ExMacOSControl.Reminders do
   end
 
   defp do_complete_many(ids) do
-    Composition.map(ids, :complete_reminder, fn id ->
-      with :ok <- complete_reminder(id), do: {:ok, id}
-    end)
+    Composition.map_effects(
+      ids,
+      :complete_reminder,
+      fn id ->
+        with :ok <- complete_reminder(id), do: {:ok, id}
+      end,
+      resource: :reminder,
+      identity: fn id -> %{id: id} end
+    )
   end
 end
