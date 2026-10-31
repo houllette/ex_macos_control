@@ -6,10 +6,18 @@ defmodule ExMacOSControl.SafariCompositionsTest do
   setup :verify_on_exit!
 
   test "scoped pages preserve identity, wait before use, and close on success" do
-    expect(ExMacOSControl.AdapterMock, :run_applescript, fn source, opts ->
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
       refute source =~ "https://example.invalid"
-      assert opts[:args] == ["https://example.invalid"]
-      {:ok, "42"}
+      assert input(opts)["url"] == "https://example.invalid"
+
+      response(%{
+        window_id: 42,
+        tab_index: 1,
+        url: "https://example.invalid",
+        owned: true,
+        application_pid: 7,
+        application_started_at: 123.5
+      })
     end)
 
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
@@ -38,7 +46,16 @@ defmodule ExMacOSControl.SafariCompositionsTest do
   end
 
   test "a readiness error still closes the owned window without running the callback" do
-    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ -> {:ok, "9"} end)
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+      response(%{
+        window_id: 9,
+        tab_index: 1,
+        url: "https://example.invalid",
+        owned: true,
+        application_pid: 7,
+        application_started_at: 123.5
+      })
+    end)
 
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
       {:error, Error.permission_denied("JavaScript disabled")}
@@ -70,8 +87,9 @@ defmodule ExMacOSControl.SafariCompositionsTest do
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response("https://example.invalid/old") end)
 
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
-      assert source =~ "t.url=input.url"
-      assert input(opts)["url"] == "https://example.invalid/new"
+      assert input(opts)["code"] =~ "location.href=input.url"
+      assert source =~ "guardInstance(input)"
+      assert input(opts)["code"] =~ "https://example.invalid/new"
       response(true)
     end)
 

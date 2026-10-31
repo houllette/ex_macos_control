@@ -416,6 +416,8 @@ defmodule ExMacOSControl.Safari do
   defdelegate wait_for_ready(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
   defdelegate wait_for_selector(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
   @doc "Navigates once and polls for completion of the new document or same-document location change."
+  defdelegate pin_document(page, opts \\ []), to: ExMacOSControl.Safari.Compositions
+  defdelegate navigate_page(page, url, opts \\ []), to: ExMacOSControl.Safari.Compositions
   defdelegate navigate_and_wait(page, url, opts \\ []), to: ExMacOSControl.Safari.Compositions
   defdelegate text(page, selector, opts \\ []), to: ExMacOSControl.Safari.Compositions
   defdelegate attribute(page, selector, attribute, opts \\ []), to: ExMacOSControl.Safari.Compositions

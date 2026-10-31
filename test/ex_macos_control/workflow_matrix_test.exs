@@ -114,7 +114,14 @@ defmodule ExMacOSControl.WorkflowMatrixTest do
     do: %{title: "Title", url: "https://fixture.invalid", text: "Body", selection: "Selected"}
 
   defp query(%{"__bundle_id" => "com.apple.Safari"}, _),
-    do: %{window_id: 42, tab_index: 1, url: "https://fixture.invalid"}
+    do: %{
+      window_id: 42,
+      tab_index: 1,
+      url: "https://fixture.invalid",
+      owned: true,
+      application_pid: 42,
+      application_started_at: 123.5
+    }
 
   defp query(%{"__bundle_id" => "com.apple.MobileSMS", "id" => "explicit-chat"}, _), do: true
   defp query(%{"__bundle_id" => "com.apple.Notes", "properties" => _}, _), do: "note"

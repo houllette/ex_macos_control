@@ -16,7 +16,11 @@ defmodule ExMacOSControl.Capture do
        struct!(
          Page,
          Map.merge(data, %{
-           source: %{app: :safari, window_id: target.window_id, tab_index: target.tab_index},
+           source:
+             Map.merge(
+               %{app: :safari, window_id: target.window_id, tab_index: target.tab_index},
+               Map.take(Map.from_struct(target), [:application_pid, :application_started_at])
+             ),
            captured_at: DateTime.utc_now()
          })
        )}

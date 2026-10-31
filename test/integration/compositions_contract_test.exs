@@ -171,13 +171,81 @@ defmodule ExMacOSControl.CompositionsContractTest do
     if running, do: assert(is_integer(pid) and pid > 0), else: assert(is_nil(pid))
   end
 
-  test "owned-window creation AppleScript compiles without opening any window" do
-    expect(ExMacOSControl.AdapterMock, :run_applescript, fn source, _ ->
-      assert :ok = Script.validate(source)
-      {:ok, "42"}
-    end)
+  test "owned-window creation binds the returned handle to the native app instance" do
+    stub_native("""
+    var made=false;
+    function fixtureApplications(){return {count:1,firstObject:{processIdentifier:123,launchDate:{isNil:function(){return false;},timeIntervalSince1970:123.5}}};}
+    var fixture={windows:function(){return [{id:function(){return 42;}}];},
+      Document:function(props){if(props.url!=='https://example.invalid')throw new Error('Wrong URL');return props;},
+      documents:{push:function(doc){made=true;}}};
+    """)
 
-    assert {:ok, %Page{owned: true, window_id: 42}} = Safari.open_page("https://example.invalid")
+    assert {:ok, %Page{owned: true, window_id: 42, application_pid: pid, application_started_at: started}} =
+             Safari.open_page("https://example.invalid")
+
+    assert is_integer(pid) and is_number(started)
+  end
+
+  test "PID and launch-time changes reject before any Safari window query" do
+    stub_native("""
+    function fixtureApplications(){return {count:1,firstObject:{processIdentifier:123,launchDate:{isNil:function(){return false;},timeIntervalSince1970:123.5}}};}
+    var fixture={windows:function(){throw new Error('Must not query windows');},close:function(){throw new Error('Must not close');}};
+    """)
+
+    for {pid, started} <- [{999, 123.5}, {123, 999.5}] do
+      page = %Page{window_id: 42, tab_index: 1, owned: true, application_pid: pid, application_started_at: started}
+      assert {:error, error} = Safari.text(page, "#field")
+      assert error.message =~ "instance changed"
+      assert {:error, error} = Safari.close_page(page)
+      assert error.message =~ "instance changed"
+    end
+  end
+
+  test "missing application instances reject without launching Safari" do
+    stub_native("""
+    function fixtureApplications(){return {count:0};}
+    var fixture={windows:function(){throw new Error('Must not query windows');},launch:function(){throw new Error('Must not launch');}};
+    """)
+
+    page = %Page{window_id: 42, tab_index: 1, application_pid: 123, application_started_at: 123.5}
+    assert {:error, error} = Safari.text(page, "#field")
+    assert error.message =~ "instance is missing"
+  end
+
+  test "document guards reject changed URLs and same-URL replacement before inspecting or closing" do
+    for {url, token} <- [{"https://example.invalid/changed", "expected"}, {"https://example.invalid/", "replacement"}] do
+      stub_native("""
+      var location={href:#{Jason.encode!(url)}};
+      var document={__exmc_document:#{Jason.encode!(token)},querySelectorAll:function(){throw new Error('Must not inspect');}};
+      var tab={};
+      var fixture={windows:function(){return [{id:function(){return 42;},tabs:function(){return [tab];}}];},
+        doJavaScript:function(code){return eval(code);},close:function(){throw new Error('Must not close');}};
+      """)
+
+      page = %Page{
+        window_id: 42,
+        tab_index: 1,
+        owned: true,
+        expected_url: "https://example.invalid/",
+        document_token: "expected"
+      }
+
+      assert {:error, error} = Safari.text(page, "#field")
+      assert error.message =~ "Safari document"
+      refute error.message =~ "Must not"
+      assert {:error, error} = Safari.close_page(page)
+      assert error.message =~ "Safari document"
+      refute error.message =~ "Must not"
+    end
+  end
+
+  test "a swallowed Safari JavaScript exception cannot become a successful null read" do
+    stub_native("""
+    var fixture={windows:function(){return [{id:function(){return 42;},tabs:function(){return [{}];}}];},doJavaScript:function(){return null;}};
+    """)
+
+    assert {:error, error} = Safari.text(%Page{window_id: 42, tab_index: 1}, "#field")
+    assert error.message =~ "Invalid Safari document acknowledgement"
   end
 
   defp stub_native(fixture) do
@@ -188,6 +256,16 @@ defmodule ExMacOSControl.CompositionsContractTest do
           "var app = input.__bundle_id ? Application(input.__bundle_id) : Application.currentApplication();",
           "var app=fixture;"
         )
+
+      source =
+        if String.contains?(fixture, "fixtureApplications"),
+          do:
+            String.replace(
+              source,
+              "$.NSRunningApplication.runningApplicationsWithBundleIdentifier",
+              "fixtureApplications"
+            ),
+          else: source
 
       OSAScriptAdapter.run_javascript(fixture <> source, opts)
     end)
