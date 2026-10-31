@@ -109,8 +109,6 @@ defmodule ExMacOSControl.DesktopSession do
               {^reference, cleanup} ->
                 :gen_tcp.close(socket)
                 send(cleanup, reference)
-            after
-              120_000 -> :gen_tcp.close(socket)
             end
 
           _ ->

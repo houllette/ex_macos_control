@@ -33,12 +33,24 @@ defmodule ExMacOSControl.CompositionsLiveTest do
     File.write!(html, "<html><head><title>#{live.marker}</title></head><body><h1>#{live.marker}</h1></body></html>")
     url = "file://" <> URI.encode(html)
 
+    note_intent = ExMacOSControl.LiveEvidence.intent(live, :note, %{parent_id: folder})
+
     assert {:ok, id} =
              Live.effect(live, :page_to_note, fn ->
                Safari.with_page(url, [timeout: 30_000], fn page ->
                  with :ok <- Safari.activate_tab(page.window_id, page.tab_index),
                       {:ok, id} <- Workflows.current_page_to_note(folder_id: folder, title: live.marker) do
-                   Live.own(live, :note, id, fn -> Notes.delete_note(id) end)
+                   Live.own(live, :note, id, fn -> Notes.delete_note(id) end,
+                     intent_id: note_intent,
+                     verify: fn ->
+                       Live.query(
+                         "com.apple.Notes",
+                         "return !app.folders.byId(input.parent).notes.byId(input.id).exists();",
+                         %{parent: folder, id: id}
+                       )
+                     end
+                   )
+
                    {:ok, id}
                  end
                end)
@@ -63,12 +75,20 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
     recipient = System.get_env("EXMC_TEST_EMAIL", "fixture@example.invalid")
 
+    draft_intent = ExMacOSControl.LiveEvidence.intent(live, :draft)
+
     assert {:ok, draft} =
              Live.effect(live, :selection_to_draft, fn ->
                Workflows.selection_to_verified_draft(to: recipient, subject: live.marker, body: live.marker)
              end)
 
-    Live.own(live, :draft, draft.id, fn -> ExMacOSControl.Mail.delete_draft(draft) end)
+    Live.own(live, :draft, draft.id, fn -> ExMacOSControl.Mail.delete_draft(draft) end,
+      intent_id: draft_intent,
+      verify: fn ->
+        Live.query("com.apple.mail", "return !app.draftsMailbox().messages.byId(input.id).exists();", %{id: draft.id})
+      end
+    )
+
     assert {:ok, saved} = ExMacOSControl.Mail.get_draft(draft)
     assert saved.id == draft.id
     assert saved.subject == live.marker
@@ -80,26 +100,51 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
   @tag apps: ["com.apple.reminders", "com.apple.iCal"]
   test "Reminder becomes a verified Calendar event before it is completed", %{live: live} do
-    assert {:ok, list} = Live.effect(live, :create_list, fn -> Reminders.create_list(live.marker) end)
-    Live.own(live, :list, list, fn -> Reminders.delete_list(list) end)
-    assert {:ok, calendar} = Live.effect(live, :create_calendar, fn -> Calendar.create_calendar(live.marker) end)
-    Live.own(live, :calendar, calendar, fn -> Calendar.delete_calendar(calendar) end)
+    assert {:ok, list} =
+             Live.create(
+               live,
+               :list,
+               fn -> Reminders.create_list(live.marker) end,
+               &Reminders.delete_list/1,
+               &Live.absent("com.apple.reminders", "lists", &1)
+             )
+
+    assert {:ok, calendar} =
+             Live.create(
+               live,
+               :calendar,
+               fn -> Calendar.create_calendar(live.marker) end,
+               &Calendar.delete_calendar/1,
+               fn id ->
+                 with {:ok, values} <- Calendar.list_calendars(limit: 1000), do: Enum.all?(values, &(&1.id != id))
+               end
+             )
 
     assert {:ok, reminder} =
-             Live.effect(live, :create_reminder, fn ->
-               Reminders.create_reminder(list, title: live.marker, body: live.marker)
-             end)
+             Live.create(
+               live,
+               :reminder,
+               fn -> Reminders.create_reminder(list, title: live.marker, body: live.marker) end,
+               &Reminders.delete_reminder/1,
+               &Live.absent("com.apple.reminders", "reminders", &1),
+               %{parent_id: list}
+             )
 
-    Live.own(live, :reminder, reminder, fn -> Reminders.delete_reminder(reminder) end)
     start_at = DateTime.utc_now() |> DateTime.add(86_400) |> DateTime.truncate(:second)
     attrs = [start_at: start_at, end_at: DateTime.add(start_at, 3600)]
+
+    event_intent = ExMacOSControl.LiveEvidence.intent(live, :event, %{calendar_id: calendar})
 
     assert {:ok, %{event_id: event}} =
              Live.effect(live, :reminder_to_event, fn ->
                Workflows.reminder_to_event(reminder, calendar, attrs, complete_reminder: true, verify_event: true)
              end)
 
-    Live.own(live, :event, event, fn -> Calendar.delete_event(calendar, event) end)
+    Live.own(live, :event, event, fn -> Calendar.delete_event(calendar, event) end,
+      intent_id: event_intent,
+      verify: fn -> with {:ok, values} <- Calendar.list_events(calendar), do: Enum.all?(values, &(&1.id != event)) end
+    )
+
     assert {:ok, %{title: title}} = Calendar.get_event(calendar, event)
     assert title == live.marker
     assert {:ok, %{completed: true}} = Reminders.get_reminder(reminder)
@@ -179,8 +224,15 @@ defmodule ExMacOSControl.CompositionsLiveTest do
   end
 
   defp notes_folder(live) do
-    assert {:ok, folder} = Live.effect(live, :create_folder, fn -> Notes.create_folder(live.marker) end)
-    Live.own(live, :folder, folder, fn -> Notes.delete_folder(folder) end)
+    assert {:ok, folder} =
+             Live.create(
+               live,
+               :folder,
+               fn -> Notes.create_folder(live.marker) end,
+               &Notes.delete_folder/1,
+               &Live.absent("com.apple.Notes", "folders", &1)
+             )
+
     folder
   end
 
