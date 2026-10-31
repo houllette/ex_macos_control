@@ -10,14 +10,14 @@ defmodule ExMacOSControl.EventKit do
   alias ExMacOSControl.{Automation, Command, Composition, Error}
   alias ExMacOSControl.EventKit.{Installer, Reference}
   @execution [:timeout, :max_output_bytes, :journal, :trace_to, :run_id]
-  @operations ~w(status authorize sources calendars create_calendar delete_calendar create_reminders reminders get_reminder get_reminders complete_reminders)
+  @operations ~w(status authorize sources calendars create_calendar delete_calendar create_reminders reminders get_reminder get_reminders complete_reminders events get_event create_event update_event delete_event)
   @types %{
     "execution_error" => :execution_error,
     "permission_denied" => :permission_denied,
     "not_found" => :not_found,
     "timeout" => :timeout
   }
-  @fields ~w(title body completed priority name source_id writable start_at end_at all_day time_zone recurrence detached)a
+  @fields ~w(title body completed priority name source_id writable start_at end_at all_day time_zone recurrence detached location url)a
 
   defdelegate install(destination, opts \\ []), to: Installer
   def status(opts \\ []), do: request("status", %{}, opts)
