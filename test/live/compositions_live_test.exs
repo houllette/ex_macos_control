@@ -65,6 +65,7 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
   @tag apps: ["com.apple.mail"]
   @tag finder: true
+  @tag mail_lifecycle: true
   test "Finder selection becomes a verified Mail draft without sending", %{live: live} do
     path = Path.join(live.desktop, live.marker <> ".txt")
     File.write!(path, live.marker)
@@ -91,9 +92,7 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
     Live.own(live, :draft, draft.id, fn -> ExMacOSControl.Mail.delete_draft(draft) end,
       intent_id: draft_intent,
-      verify: fn ->
-        Live.query("com.apple.mail", "return !app.draftsMailbox().messages.byId(input.id).exists();", %{id: draft.id})
-      end
+      verify: fn -> Live.draft_absent(draft) end
     )
 
     assert {:ok, saved} = ExMacOSControl.Mail.get_draft(draft)

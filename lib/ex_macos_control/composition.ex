@@ -206,6 +206,8 @@ defmodule ExMacOSControl.Composition do
   defp valid_identity_field?({key, value}) do
     key in [
       :id,
+      :outgoing_id,
+      :application_pid,
       :parent_id,
       :account_id,
       :calendar_id,

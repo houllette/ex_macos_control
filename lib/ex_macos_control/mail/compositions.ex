@@ -15,13 +15,17 @@ defmodule ExMacOSControl.Mail.Compositions do
   end
 
   defp create_and_verify(opts, files) do
-    with {:ok, before} <- Composition.step(:existing_drafts, fn -> matching_ids(opts[:subject]) end),
-         {:ok, outgoing} <- Composition.effect(:create_draft, &Mail.create_draft/1, [opts]) do
-      await_saved(before, outgoing, opts, files)
+    with {:ok, before} <- Composition.step(:existing_drafts, fn -> draft_snapshot(opts[:subject]) end),
+         {:ok, outgoing} <-
+           Composition.effect(:create_draft, fn -> Mail.create_draft(opts) end,
+             resource: :outgoing_draft,
+             identity: process_identity(before.pid)
+           ) do
+      await_saved(before.ids, outgoing, opts, files, before.pid)
     end
   end
 
-  defp await_saved(before, outgoing, opts, files) do
+  defp await_saved(before, outgoing, opts, files, pid) do
     key = make_ref()
 
     try do
@@ -37,6 +41,7 @@ defmodule ExMacOSControl.Mail.Compositions do
              outgoing_id: outgoing,
              subject: opts[:subject],
              message_id: Map.get(record, :message_id),
+             mail_pid: pid,
              created_at: DateTime.utc_now()
            }}
 
@@ -95,13 +100,30 @@ defmodule ExMacOSControl.Mail.Compositions do
     end
   end
 
-  defp matching_ids(subject),
-    do:
+  defp draft_snapshot(subject) do
+    result =
       Automation.query(
         "com.apple.mail",
-        "return app.draftsMailbox().messages.whose({subject:input.subject})().map(function(o){return o.id();});",
+        mail_process() <>
+          "var ids=app.draftsMailbox().messages.whose({subject:input.subject})().map(function(o){return o.id();});var pid=mailPID();if(!pid)throw new Error('Mail stopped before draft creation');return {ids:ids,pid:pid};",
         %{subject: subject}
       )
+
+    case result do
+      {:ok, %{ids: ids, pid: pid} = snapshot} when is_list(ids) and is_integer(pid) and pid > 0 ->
+        if Enum.all?(ids, &(is_integer(&1) or is_binary(&1))),
+          do: {:ok, snapshot},
+          else: invalid_snapshot()
+
+      {:error, %Error{} = error} ->
+        {:error, %{error | details: Map.put(error.details || %{}, :outcome, :not_started)}}
+
+      _ ->
+        invalid_snapshot()
+    end
+  end
+
+  defp invalid_snapshot, do: {:error, Error.execution_error("Invalid Mail process snapshot", outcome: :not_started)}
 
   defp attachment_snapshot(paths) when is_list(paths) do
     Enum.reduce_while(paths, {:ok, []}, fn path, {:ok, files} ->
@@ -134,8 +156,61 @@ defmodule ExMacOSControl.Mail.Compositions do
   end
 
   def delete(%Draft{} = draft, opts) do
-    Automation.action("com.apple.mail", resolve() <> "app.delete(o);", params(draft), opts)
+    Desktop.with_lock(fn -> delete_workflow(draft) end, opts)
   end
+
+  defp delete_workflow(draft) do
+    identity = Map.merge(%{id: draft.id, outgoing_id: draft.outgoing_id}, process_identity(draft.mail_pid))
+
+    with :ok <- Composition.effect(:delete_draft, fn -> delete_native(draft) end, resource: :draft, identity: identity),
+         do: Composition.verify(:draft_absent, &draft_absent?(draft, &1))
+  end
+
+  defp delete_native(draft) do
+    Automation.action(
+      "com.apple.mail",
+      mail_process() <>
+        """
+        var box=app.draftsMailbox(),ids=box.messages.id();
+        if(ids.map(String).indexOf(String(input.id))>=0){#{resolve()}}
+        if(input.mail_pid && mailPID()===input.mail_pid){
+          var outgoing=app.outgoingMessages(),matches=outgoing.filter(function(o){return String(o.id())===String(input.outgoing_id);});
+          if(matches.length>1)throw new Error('Ambiguous outgoing draft');
+          if(matches.length===1){
+            if(matches[0].subject()!==input.subject)throw new Error('Outgoing draft identity changed');
+            app.close(matches[0],{saving:'no'});
+          }
+        }
+        if(box.messages.id().map(String).indexOf(String(input.id))>=0){#{resolve()}app.delete(o);}
+        """,
+      params(draft)
+    )
+  end
+
+  defp draft_absent?(draft, remaining) do
+    Automation.query(
+      "com.apple.mail",
+      mail_process() <>
+        """
+        if(app.draftsMailbox().messages.id().map(String).indexOf(String(input.id))>=0)return false;
+        if(input.mail_pid && mailPID()===input.mail_pid)
+          return app.outgoingMessages.id().map(String).indexOf(String(input.outgoing_id))<0;
+        return true;
+        """,
+      params(draft),
+      timeout: remaining
+    )
+  end
+
+  defp mail_process do
+    """
+    function mailPID(){ObjC.import('AppKit');var values=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($('com.apple.mail'));
+      if(values.count>1)throw new Error('Ambiguous Mail process');var process=values.firstObject;return process.isNil()?null:Number(process.processIdentifier);}
+    """
+  end
+
+  defp process_identity(pid) when is_integer(pid) and pid > 0, do: %{application_pid: pid}
+  defp process_identity(_), do: %{}
 
   defp resolve do
     """
@@ -144,7 +219,14 @@ defmodule ExMacOSControl.Mail.Compositions do
     """
   end
 
-  defp params(draft), do: %{id: draft.id, subject: draft.subject, message_id: draft.message_id}
+  defp params(draft),
+    do: %{
+      id: draft.id,
+      subject: draft.subject,
+      message_id: draft.message_id,
+      outgoing_id: draft.outgoing_id,
+      mail_pid: draft.mail_pid
+    }
 
   defp validate(opts) do
     with :ok <-

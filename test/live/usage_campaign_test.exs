@@ -26,6 +26,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
     {:ok, live: Live.start(context)}
   end
 
+  @tag mail_lifecycle: true
   @tag utility: true
   @tag apps: ["com.apple.Safari", "com.apple.Notes", "com.apple.reminders", "com.apple.mail"]
   test "research utility reuses a capture across destinations after closing its source", %{live: live} do
@@ -68,6 +69,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
 
   @tag utility: true
   @tag apps: ["com.apple.finder", "com.apple.imageevents", "com.apple.mail"]
+  @tag mail_lifecycle: true
   test "file preparation copies and transforms owned images before drafting their outputs", %{live: live} do
     source = Path.join(live.root, "source.png")
     png = png()
@@ -401,6 +403,39 @@ defmodule ExMacOSControl.UsageCampaignTest do
     Live.event(live, "verified")
   end
 
+  @tag apps: ["com.apple.mail"]
+  @tag mail_lifecycle: true
+  test "deleting a saved draft closes its compose object and preserves a neighboring draft", %{live: live} do
+    refs =
+      for suffix <- ["target", "neighbor"] do
+        intent = Evidence.intent(live, :draft)
+
+        assert {:ok, draft} =
+                 Live.effect(live, :create_neighbor_draft, fn ->
+                   Mail.create_verified_draft(to: recipient(), subject: "#{live.marker}-#{suffix}", body: live.marker)
+                 end)
+
+        assert is_integer(draft.mail_pid) and draft.mail_pid > 0
+        own_draft(live, draft, intent)
+        draft
+      end
+
+    [target, neighbor] = refs
+    assert :ok = Live.effect(live, :delete_target_draft, fn -> Mail.delete_draft(target) end)
+    assert {:ok, true} = Live.draft_absent(target)
+    assert {:ok, %{content: body}} = Mail.get_draft(neighbor)
+    assert body =~ live.marker
+
+    assert {:ok, true} =
+             Live.query(
+               "com.apple.mail",
+               "return app.outgoingMessages().some(function(o){return String(o.id())===String(input.id)&&o.subject()===input.subject;});",
+               %{id: neighbor.outgoing_id, subject: neighbor.subject}
+             )
+
+    Live.event(live, "verified")
+  end
+
   @tag apps: ["com.apple.AddressBook"]
   @tag final_live: true
   test "contact composition creates details in an owned group and preserves exact identity", %{live: live} do
@@ -523,9 +558,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
     do:
       Live.own(live, :draft, draft.id, fn -> Mail.delete_draft(draft) end,
         intent_id: intent,
-        verify: fn ->
-          Live.query("com.apple.mail", "return !app.draftsMailbox().messages.byId(input.id).exists();", %{id: draft.id})
-        end
+        verify: fn -> Live.draft_absent(draft) end
       )
 
   defp own_event(live, id, calendar, intent),

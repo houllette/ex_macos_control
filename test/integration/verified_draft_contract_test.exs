@@ -23,7 +23,7 @@ defmodule ExMacOSControl.VerifiedDraftContractTest do
           attachments: [%{name: "extra.txt", size: 1}]
         ] do
       fixture = draft_fixture(Map.put(valid, key, value))
-      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response([]) end)
+      expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(%{ids: [], pid: 42}) end)
       expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ -> {:ok, "outgoing"} end)
 
       expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
@@ -43,7 +43,7 @@ defmodule ExMacOSControl.VerifiedDraftContractTest do
                )
     end
 
-    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response([]) end)
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ -> response(%{ids: [], pid: 42}) end)
     expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, _ -> {:ok, "outgoing"} end)
 
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
@@ -64,7 +64,7 @@ defmodule ExMacOSControl.VerifiedDraftContractTest do
   test "a changed native identity prevents draft deletion" do
     fixture = """
     var draft={exists:function(){return true;},subject:function(){return 'changed';},messageId:function(){return 'native';}};
-    var fixture={draftsMailbox:function(){return {messages:{byId:function(){return draft;}}};},
+    var fixture={draftsMailbox:function(){return {messages:{id:function(){return [42];},byId:function(){return draft;}}};},
       delete:function(){throw new Error('Must not delete a changed draft');}};
     """
 
@@ -90,6 +90,71 @@ defmodule ExMacOSControl.VerifiedDraftContractTest do
     assert {:error, error} = Mail.delete_draft(reference)
     assert error.message =~ "Saved draft identity changed"
     refute error.message =~ "Must not delete"
+  end
+
+  test "native draft deletion closes its compose object and accepts Mail already removing the saved message" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      assert source =~ "app.close"
+      native_process(compose_fixture(true, true, "original", true), source, opts)
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      refute source =~ "app.close"
+      native_process(compose_fixture(false, false, "original", false), source, opts)
+    end)
+
+    assert :ok = Mail.delete_draft(reference(100))
+  end
+
+  test "a changed Mail process preserves a reused outgoing ID while deleting the captured saved message" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      native_process(compose_fixture(true, true, "new user's compose", false), source, opts)
+    end)
+
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      native_process(compose_fixture(false, true, "new user's compose", false), source, opts)
+    end)
+
+    assert :ok = Mail.delete_draft(reference(99))
+  end
+
+  test "a changed outgoing identity refuses both close and saved message deletion" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
+      native_process(compose_fixture(true, true, "changed", false), source, opts)
+    end)
+
+    assert {:error, error} = Mail.delete_draft(reference(100))
+    assert error.message =~ "Outgoing draft identity changed"
+    refute error.message =~ "Must not close"
+  end
+
+  defp reference(pid),
+    do: %Draft{
+      id: 42,
+      outgoing_id: "999",
+      mail_pid: pid,
+      subject: "original",
+      message_id: "native",
+      created_at: DateTime.utc_now()
+    }
+
+  defp native_process(fixture, source, opts) do
+    source = String.replace(source, ~r/function mailPID\(\)\{.*?\}\n/s, "function mailPID(){return 100;}\n")
+    native(fixture, source, opts)
+  end
+
+  defp compose_fixture(saved, outgoing, subject, close_allowed) do
+    """
+    var saved=#{saved},outgoing=#{outgoing},closeAllowed=#{close_allowed};
+    var draft={exists:function(){return saved;},subject:function(){return 'original';},messageId:function(){return 'native';}};
+    var compose={id:function(){return 999;},subject:function(){return #{Jason.encode!(subject)};}};
+    var messages={id:function(){return saved?[42]:[];},byId:function(){return draft;}};
+    var outgoingMessages=function(){return outgoing?[compose]:[];};outgoingMessages.id=function(){return outgoing?[999]:[];};
+    var fixture={draftsMailbox:function(){return {messages:messages};},outgoingMessages:outgoingMessages,
+      close:function(o,options){if(!closeAllowed)throw new Error('Must not close a different compose object');
+        if(o!==compose||options.saving!=='no')throw new Error('Wrong close target or save policy');outgoing=false;saved=false;},
+      delete:function(o){if(o!==draft)throw new Error('Wrong saved target');saved=false;}};
+    """
   end
 
   defp draft_fixture(data) do

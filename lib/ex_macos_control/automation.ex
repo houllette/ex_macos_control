@@ -4,7 +4,7 @@ defmodule ExMacOSControl.Automation do
   alias ExMacOSControl.Error
 
   @execution [:timeout, :max_output_bytes]
-  @keys ~w(id name account_id folder_id list_id calendar_id parent_id title body plaintext
+  @keys ~w(id ids name account_id folder_id list_id calendar_id parent_id title body plaintext
            created_at modified_at completed completed_at due_at reminder_at priority flagged
            start_at end_at all_day recurrence excluded_dates location description url writable
            email status attendees phones emails addresses groups organization first_name last_name
