@@ -4,6 +4,9 @@ defmodule ExMacOSControl.EventKit.Calendar do
   DateTime or ISO8601 string including an offset; naive wall times are rejected.
   time_zone is an explicit IANA zone (default Etc/UTC). EventKit references
   include the calendar and occurrence identity and cannot use Apple-event IDs.
+  Creation accepts a bounded recurrence rule (frequency, interval and count or until).
+  Recurring updates and deletions require scope: :occurrence or :future. Future
+  includes the selected occurrence and later events; it does not delete the past.
   Reads require a bounded range. Writes are independently read back and never replayed.
   """
   alias ExMacOSControl.{Automation, Composition, Error, EventKit}
@@ -74,7 +77,9 @@ defmodule ExMacOSControl.EventKit.Calendar do
   end
 
   def create_event(calendar, attrs, opts \\ []) do
-    with :ok <- Reference.validate(calendar, :calendar), :ok <- options(opts), {:ok, attrs} <- attributes(attrs) do
+    with :ok <- Reference.validate(calendar, :calendar),
+         :ok <- options(opts),
+         {:ok, attrs} <- creation_attributes(attrs) do
       Composition.run(
         fn -> write_event("create_event", %{calendar: Reference.wire(calendar)}, attrs, calendar.id, opts) end,
         EventKit.execution(opts)
@@ -83,15 +88,16 @@ defmodule ExMacOSControl.EventKit.Calendar do
   end
 
   def update_event(ref, attrs, opts \\ []) do
-    with :ok <- event_ref(ref), :ok <- options(opts), :ok <- Automation.options(attrs, @fields) do
+    with :ok <- event_ref(ref), :ok <- scoped_options(opts), :ok <- Automation.options(attrs, @fields) do
       Composition.run(fn -> update_workflow(ref, attrs, opts) end, EventKit.execution(opts))
     end
   end
 
   defp update_workflow(ref, attrs, opts) do
     with {:ok, current} <- get_event(ref, helper(opts)),
+         :ok <- recurring_scope(current, opts),
          {:ok, merged} <- attributes(Keyword.merge(Map.to_list(Map.take(current, @fields)), attrs)),
-         do: write_event("update_event", %{ref: Reference.wire(ref)}, merged, ref.calendar_id, opts)
+         do: write_event("update_event", %{ref: Reference.wire(ref), scope: scope(opts)}, merged, ref.calendar_id, opts)
   end
 
   defp write_event(operation, args, attrs, calendar_id, opts) do
@@ -113,18 +119,26 @@ defmodule ExMacOSControl.EventKit.Calendar do
   end
 
   def delete_event(ref, opts \\ []) do
-    with :ok <- event_ref(ref), :ok <- options(opts) do
+    with :ok <- event_ref(ref), :ok <- scoped_options(opts) do
       Composition.run(fn -> delete_workflow(ref, opts) end, EventKit.execution(opts))
     end
   end
 
   defp delete_workflow(ref, opts) do
-    with :ok <-
+    with {:ok, current} <- get_event(ref, helper(opts)),
+         :ok <- recurring_scope(current, opts),
+         :ok <-
            Composition.effect(
              :delete_eventkit_event,
-             fn -> delete_native("delete_event", %{ref: Reference.wire(ref)}, opts) end,
+             fn -> delete_native("delete_event", %{ref: Reference.wire(ref), scope: scope(opts)}, opts) end,
              resource: :eventkit_event,
-             identity: %{id: ref.id, calendar_id: ref.calendar_id}
+             identity: %{
+               id: ref.id,
+               calendar_id: ref.calendar_id,
+               occurrence_at: ref.occurrence_at,
+               start_at: ref.start_at,
+               scope: scope(opts) || "occurrence"
+             }
            ),
          do: Composition.verify(:eventkit_event_absent, &absent?(ref, opts, &1))
   end
@@ -139,14 +153,78 @@ defmodule ExMacOSControl.EventKit.Calendar do
 
   defp matches?(ref, attrs, opts, remaining) do
     with {:ok, row} <- get_event(ref, Keyword.put(helper(opts), :timeout, remaining)),
-         do: Enum.all?(attrs, fn {key, value} -> equivalent?(key, row[key], value) end)
+         do:
+           Enum.all?(attrs, fn {key, value} ->
+             equivalent?(key, field(row, key), value)
+           end)
   end
+
+  defp field(row, :recurrence), do: row[:recurrence_rule]
+  defp field(row, key), do: row[key]
 
   defp equivalent?(key, actual, expected) when key in [:start_at, :end_at] do
     with {:ok, left} <- absolute(actual), {:ok, right} <- absolute(expected), do: left == right
   end
 
   defp equivalent?(_key, actual, expected), do: actual == expected
+
+  defp creation_attributes(attrs) do
+    with :ok <- Automation.options(attrs, @fields ++ [:recurrence]),
+         {:ok, fields} <- attributes(Keyword.delete(attrs, :recurrence)) do
+      if Keyword.has_key?(attrs, :recurrence), do: add_recurrence(fields, attrs[:recurrence]), else: {:ok, fields}
+    end
+  end
+
+  defp add_recurrence(fields, rule) do
+    with :ok <- Automation.options(rule, [:frequency, :interval, :count, :until]),
+         true <- rule[:frequency] in [:daily, :weekly, :monthly, :yearly],
+         true <- Keyword.get(rule, :interval, 1) in 1..365,
+         true <- Keyword.has_key?(rule, :count) != Keyword.has_key?(rule, :until),
+         {:ok, ending} <- recurrence_end(rule, fields.start_at) do
+      {:ok,
+       Map.put(
+         fields,
+         :recurrence,
+         Map.merge(
+           %{"frequency" => Atom.to_string(rule[:frequency]), "interval" => Keyword.get(rule, :interval, 1)},
+           ending
+         )
+       )}
+    else
+      _ -> EventKit.invalid("Recurrence requires frequency, positive interval and exactly one count or until")
+    end
+  end
+
+  defp recurrence_end([count: count], _start) when count in 1..1000, do: {:ok, %{"count" => count}}
+
+  defp recurrence_end(rule, start) do
+    cond do
+      rule[:count] in 1..1000 ->
+        {:ok, %{"count" => rule[:count]}}
+
+      rule[:until] ->
+        with {:ok, until} <- absolute(rule[:until]), :ok <- interval(start, until), do: {:ok, %{"until" => until}}
+
+      true ->
+        EventKit.invalid("Invalid recurrence end")
+    end
+  end
+
+  defp scoped_options(opts) do
+    with :ok <- Automation.options(opts, @options ++ [:scope]) do
+      if not Keyword.has_key?(opts, :scope) or opts[:scope] in [:occurrence, :future],
+        do: :ok,
+        else: EventKit.invalid("scope must be :occurrence or :future")
+    end
+  end
+
+  defp recurring_scope(current, opts) do
+    if (current.recurrence or current.detached) and is_nil(opts[:scope]),
+      do: EventKit.invalid("Recurring changes require explicit scope: :occurrence or :future"),
+      else: :ok
+  end
+
+  defp scope(opts), do: if(opts[:scope], do: Atom.to_string(opts[:scope]))
 
   defp attributes(attrs) do
     with :ok <- Automation.options(attrs, @fields),

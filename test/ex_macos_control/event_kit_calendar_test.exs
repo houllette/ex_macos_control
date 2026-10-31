@@ -69,6 +69,25 @@ defmodule ExMacOSControl.EventKitCalendarTest do
     assert {:ok, %{pending: [_ | _]}} = Journal.inspect_run(error.details.journal_path)
   end
 
+  test "recurrence is bounded and edits require an explicit supported scope", %{
+    opts: opts,
+    root: root,
+    calendar: calendar
+  } do
+    assert {:error, _} = Calendar.create_event(calendar, attrs("-06:00") ++ [recurrence: [frequency: :daily]], opts)
+    refute File.exists?(Path.join(root, "state.json"))
+
+    assert {:ok, event} =
+             Calendar.create_event(calendar, attrs("-06:00") ++ [recurrence: [frequency: :daily, count: 3]], opts)
+
+    assert event.recurrence
+    assert {:error, %{details: %{outcome: :not_started}}} = Calendar.delete_event(event.ref, opts)
+    assert {:error, _} = Calendar.update_event(event.ref, [title: "no implicit span"], opts)
+    assert {:error, _} = Calendar.delete_event(event.ref, Keyword.put(opts, :scope, :series))
+    assert Jason.decode!(File.read!(Path.join(root, "state.json")))["mutations"] == 1
+    assert :ok = Calendar.delete_event(event.ref, Keyword.put(opts, :scope, :occurrence))
+  end
+
   defp attrs(offset),
     do: [
       title: "DST",
