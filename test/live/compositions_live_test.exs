@@ -96,7 +96,7 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
     assert {:ok, %{event_id: event}} =
              Live.effect(live, :reminder_to_event, fn ->
-               Workflows.reminder_to_event(reminder, calendar, attrs, complete_reminder: true)
+               Workflows.reminder_to_event(reminder, calendar, attrs, complete_reminder: true, verify_event: true)
              end)
 
     Live.own(live, :event, event, fn -> Calendar.delete_event(calendar, event) end)

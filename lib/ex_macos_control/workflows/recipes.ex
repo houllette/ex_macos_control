@@ -30,7 +30,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
          :ok <- Automation.options(opts, @execution ++ @shortcut) do
       Finder.with_selection(
         fn paths ->
-          Composition.step(:run_shortcut, &Shortcuts.run/2, [
+          Composition.effect(:run_shortcut, &Shortcuts.run/2, [
             identifier,
             Keyword.put(Keyword.take(opts, @shortcut), :input_paths, paths)
           ])
@@ -239,7 +239,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
   Returns event_id and reminder_id. No effect is retried.
   """
   def reminder_to_event(reminder_id, calendar_id, attributes, opts \\ []) do
-    with :ok <- Automation.options(opts, @execution ++ [:complete_reminder]),
+    with :ok <- Automation.options(opts, @execution ++ [:complete_reminder, :verify_event]),
          :ok <-
            Automation.options(attributes, [
              :title,
@@ -251,14 +251,16 @@ defmodule ExMacOSControl.Workflows.Recipes do
              :recurrence,
              :url
            ]),
-         true <- is_boolean(Keyword.get(opts, :complete_reminder, false)) do
+         true <-
+           is_boolean(Keyword.get(opts, :complete_reminder, false)) and
+             is_boolean(Keyword.get(opts, :verify_event, false)) do
       Composition.run(
         fn -> do_reminder_to_event(reminder_id, calendar_id, attributes, opts) end,
         Keyword.take(opts, @execution)
       )
     else
       {:error, _} = error -> error
-      _ -> Automation.invalid("complete_reminder must be a boolean")
+      _ -> Automation.invalid("complete_reminder and verify_event must be booleans")
     end
   end
 
@@ -336,18 +338,13 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   defp do_current_page_to_reminder(list_id, opts) do
     with {:ok, page} <- capture_page() do
-      create_reminder(list_id, page.title, page.url <> "\n\n" <> page.selection, opts)
+      Composition.effect(:create_reminder, fn -> Reminders.create_from(list_id, page, Keyword.take(opts, @reminder)) end)
     end
   end
 
   defp do_current_page_to_draft(mail_options) do
     with {:ok, page} <- capture_page() do
-      attrs =
-        mail_options
-        |> Keyword.put_new(:subject, page.title)
-        |> Keyword.put_new(:body, page.url <> "\n\n" <> page.selection)
-
-      Composition.effect(:create_draft, fn -> Mail.create_draft(attrs) end)
+      Composition.effect(:create_draft, fn -> Mail.create_draft_from(page, mail_options) end)
     end
   end
 
@@ -366,7 +363,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   defp do_clipboard_to_shortcut(identifier, opts) do
     with {:ok, text} <- Composition.step(:read_clipboard, &StandardAdditions.clipboard/0) do
-      Composition.step(:run_shortcut, fn ->
+      Composition.effect(:run_shortcut, fn ->
         Shortcuts.run(identifier, Keyword.put(Keyword.take(opts, @shortcut), :input, text))
       end)
     end
@@ -382,7 +379,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
   defp shortcut_text(identifier, input, opts) do
     options = Keyword.merge(Keyword.take(opts, [:trim]), input: input, output: :text)
 
-    case Composition.step(:run_shortcut, &Shortcuts.run/2, [identifier, options]) do
+    case Composition.effect(:run_shortcut, &Shortcuts.run/2, [identifier, options]) do
       :ok -> {:ok, ""}
       result -> result
     end
@@ -392,7 +389,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
     with {:ok, message} <- read_message(account_id, mailbox, message_id) do
       Composition.effect(:create_note, fn ->
         Notes.create_text_note(
-          Keyword.get(opts, :title, message.subject),
+          Keyword.get(opts, :title, Capture.title(message)),
           message_body(message),
           Keyword.take(opts, [:folder_id])
         )
@@ -402,14 +399,14 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   defp do_message_to_reminder(account_id, mailbox, message_id, list_id, opts) do
     with {:ok, message} <- read_message(account_id, mailbox, message_id),
-         do: create_reminder(list_id, message.subject, message_body(message), opts)
+         do: create_reminder(list_id, Capture.title(message), message_body(message), opts)
   end
 
   defp do_event_to_note(calendar_id, event_id, opts) do
     with {:ok, event} <- read_event(calendar_id, event_id) do
       Composition.effect(:create_note, fn ->
         Notes.create_text_note(
-          Keyword.get(opts, :title, event.title),
+          Keyword.get(opts, :title, Capture.title(event)),
           event_body(event),
           Keyword.take(opts, [:folder_id])
         )
@@ -419,7 +416,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   defp do_event_to_reminder(calendar_id, event_id, list_id, opts) do
     with {:ok, event} <- read_event(calendar_id, event_id) do
-      create_reminder(list_id, event.title, event_body(event), Keyword.put_new(opts, :due_at, event.start_at))
+      create_reminder(list_id, Capture.title(event), event_body(event), Keyword.put_new(opts, :due_at, event.start_at))
     end
   end
 
@@ -435,10 +432,38 @@ defmodule ExMacOSControl.Workflows.Recipes do
            |> Keyword.put_new(:title, reminder.title)
            |> Keyword.put_new(:description, reminder.body || ""),
          {:ok, id} <- Composition.effect(:create_event, fn -> Calendar.create_event(calendar_id, attrs) end),
+         :ok <- maybe_verify_event(calendar_id, id, attrs, opts),
          :ok <- maybe_complete(reminder_id, opts) do
       {:ok, %{event_id: id, reminder_id: reminder_id}}
     end
   end
+
+  defp maybe_verify_event(calendar_id, id, attrs, opts) do
+    if opts[:verify_event] do
+      Composition.verify(:created_event, &event_matches?(calendar_id, id, attrs, &1))
+    else
+      :ok
+    end
+  end
+
+  defp event_matches?(calendar, id, attrs, remaining) do
+    with {:ok, event} <- Calendar.get_event(calendar, id, timeout: remaining) do
+      Enum.all?(attrs, &event_field_matches?(&1, event))
+    end
+  end
+
+  defp event_field_matches?({key, expected}, event) when key in [:start_at, :end_at] do
+    with {:ok, expected} <- Automation.date(expected),
+         {:ok, actual} <- Automation.date(Map.get(event, key)),
+         {:ok, expected, _} <- DateTime.from_iso8601(expected),
+         {:ok, actual, _} <- DateTime.from_iso8601(actual) do
+      DateTime.compare(expected, actual) == :eq
+    else
+      _ -> false
+    end
+  end
+
+  defp event_field_matches?({key, expected}, event), do: Map.get(event, key) == expected
 
   defp do_open_workspace(directory, opts) do
     with {:ok, apps} <-
@@ -447,7 +472,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
              :ensure_application,
              &Applications.ensure_running/1
            ),
-         :ok <- Composition.step(:open_folder, fn -> Finder.new_window(directory) end),
+         :ok <- Composition.effect(:open_folder, fn -> Finder.new_window(directory) end),
          {:ok, pages} <- Composition.map(Keyword.get(opts, :urls, []), :open_page, &Safari.open_page/1) do
       {:ok, %{folder: Path.expand(directory), applications: apps, pages: pages}}
     end

@@ -175,7 +175,11 @@ defmodule ExMacOSControl.Contacts do
 
   defp do_create_with_details(attrs, actions) do
     with {:ok, id} <- Composition.effect(:create_contact, fn -> create_contact(attrs) end),
-         {:ok, _} <- Composition.map(actions, :add_contact_detail, &add_detail(id, &1)) do
+         {:ok, _} <-
+           Composition.map_effects(actions, :add_contact_detail, &add_detail(id, &1),
+             resource: :contact,
+             identity: %{id: id}
+           ) do
       {:ok, id}
     end
   end

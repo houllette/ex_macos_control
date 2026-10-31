@@ -154,8 +154,14 @@ defmodule ExMacOSControl.ImageEvents do
   end
 
   defp do_process_many(paths, outputs, steps, opts) do
-    Composition.map(Enum.zip(paths, outputs), :process_image, fn {path, output} ->
-      with :ok <- process(path, output, steps, Keyword.take(opts, [:format])), do: {:ok, output}
-    end)
+    Composition.map_effects(
+      Enum.zip(paths, outputs),
+      :process_image,
+      fn {path, output} ->
+        with :ok <- process(path, output, steps, Keyword.take(opts, [:format])), do: {:ok, output}
+      end,
+      resource: :file,
+      identity: fn {path, output} -> %{source_path: path, path: output} end
+    )
   end
 end

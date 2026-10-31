@@ -229,7 +229,7 @@ defmodule ExMacOSControl.Shortcuts do
     |> Enum.reduce_while({:ok, input}, fn {identifier, index}, {:ok, value} ->
       input = if index > 0 and opts[:output] == :json, do: Jason.encode!(value), else: value
 
-      case Composition.step({:shortcut, identifier}, &run/2, [
+      case Composition.effect({:shortcut, identifier}, &run/2, [
              identifier,
              Keyword.merge(Keyword.take(opts, [:output, :trim]), input: input)
            ]) do

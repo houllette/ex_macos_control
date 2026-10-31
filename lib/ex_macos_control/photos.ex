@@ -197,9 +197,14 @@ defmodule ExMacOSControl.Photos do
     with {:ok, album} <-
            Composition.effect(:create_album, fn -> create_album(name, Keyword.take(opts, [:folder_id])) end),
          {:ok, media} <-
-           Composition.step(:import_files, fn ->
-             import_files(paths, Keyword.merge(Keyword.take(opts, [:skip_duplicates]), album_id: album))
-           end) do
+           Composition.effect(
+             :import_files,
+             fn ->
+               import_files(paths, Keyword.merge(Keyword.take(opts, [:skip_duplicates]), album_id: album))
+             end,
+             resource: :photo,
+             identity: %{parent_id: album}
+           ) do
       {:ok, %{album_id: album, media_ids: media}}
     end
   end

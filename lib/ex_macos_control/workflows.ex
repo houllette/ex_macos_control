@@ -71,7 +71,7 @@ defmodule ExMacOSControl.Workflows do
   @doc "Creates a Reminder using a Note's title and plain text; leaves the source Note intact."
   defdelegate note_to_reminder(note_id, list_id, opts \\ []), to: ExMacOSControl.Workflows.Recipes
 
-  @doc "Creates a Calendar event from a Reminder. Event attributes must include explicit\nstart_at and end_at; title/description default to the Reminder. The optional\ncomplete_reminder boolean marks it complete only after event creation succeeds.\nReturns event_id and reminder_id. No effect is retried.\n"
+  @doc "Creates a Calendar event from a Reminder. Requires start_at and end_at; title/description default to the Reminder. complete_reminder marks it complete after creation is acknowledged. Set verify_event: true to read back all requested event fields before completing the reminder. Returns event_id and reminder_id. No effect is retried."
   defdelegate reminder_to_event(reminder_id, calendar_id, attributes, opts \\ []), to: ExMacOSControl.Workflows.Recipes
 
   @doc "Opens a persistent workspace: Finder folder, optional applications and Safari\nURLs. Returns application identities and owned Page references. Options are\napplications (identities), urls, timeout and max_output_bytes. Created windows\nstay open; partial results identify resources if a later step fails.\n"

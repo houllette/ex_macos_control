@@ -45,11 +45,15 @@ defmodule ExMacOSControl.AccessibilityTest do
     assert {:error, ^error} = Wait.until(fn -> {:error, error} end)
   end
 
-  test "state waits inherit the scoped deadline and output limit" do
+  test "state waits inherit output limits and stop before dispatch at an expired deadline" do
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
-      assert opts[:timeout] == 0
+      assert opts[:timeout] in 1..1000
       assert opts[:max_output_bytes] == 500
-      {:ok, ~s({"exmc":1,"result":false})}
+      {:ok, ~s({"exmc":1,"result":true})}
+    end)
+
+    ExMacOSControl.with_options([timeout: 1000, max_output_bytes: 500], fn ->
+      assert :ok = Accessibility.wait_for("Synthetic", [])
     end)
 
     ExMacOSControl.with_options([timeout: 0, max_output_bytes: 500], fn ->
