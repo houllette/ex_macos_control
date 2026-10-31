@@ -452,13 +452,22 @@ defmodule ExMacOSControl.Mail do
   defdelegate delete_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :delete
 
   @doc "Creates a draft from captured content. File captures attach their paths; other captures supply text."
-  def create_draft_from(capture, opts) do
-    with {:ok, attrs} <- draft_from_options(capture, opts), do: create_draft(attrs)
+  def create_draft_from(capture, opts), do: create_from_capture(capture, opts, &create_draft/1)
+
+  @doc "Creates a verified saved draft from a capture, checking staged file checksums before dispatch."
+  def create_verified_draft_from(capture, opts), do: create_from_capture(capture, opts, &create_verified_draft/1)
+
+  defp create_from_capture(capture, opts, create) do
+    with {:ok, attrs} <- draft_from_options(capture, opts) do
+      Composition.run(
+        fn -> verified_capture_handoff(capture, attrs, create) end,
+        Keyword.take(opts, [:timeout, :max_output_bytes])
+      )
+    end
   end
 
-  @doc "Creates and verifies a saved draft from an immutable capture."
-  def create_verified_draft_from(capture, opts) do
-    with {:ok, attrs} <- draft_from_options(capture, opts), do: create_verified_draft(attrs)
+  defp verified_capture_handoff(capture, attrs, create) do
+    with :ok <- ExMacOSControl.Capture.verify_files(capture), do: create.(attrs)
   end
 
   defp draft_from_options(capture, opts) do
