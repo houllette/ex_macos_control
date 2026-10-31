@@ -64,7 +64,7 @@ defmodule ExMacOSControl.Capture do
 
   def event(calendar, id, opts \\ []) do
     with {:ok, data} <- Calendar.get_event(calendar, id, opts) do
-      fields = Map.take(data, [:title, :start_at, :end_at, :location, :description, :url])
+      fields = Map.take(data, [:title, :start_at, :end_at, :all_day, :recurrence, :location, :description, :url])
 
       {:ok,
        struct!(

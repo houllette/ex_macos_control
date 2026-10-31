@@ -25,3 +25,7 @@ Desktop-mutating tests additionally require --include desktop (use an isolated s
 """
 
 IO.puts(platform_info)
+
+if System.get_env("EXMC_LIVE_TESTS") == "1" and System.get_env("EXMC_PERSONAL_TESTS") == "1" do
+  ExUnit.configure(formatters: [ExUnit.CLIFormatter, ExMacOSControl.LiveEvidenceFormatter])
+end
