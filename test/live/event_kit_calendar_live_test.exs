@@ -95,6 +95,98 @@ defmodule ExMacOSControl.EventKitCalendarLiveTest do
     })
   end
 
+  @tag eventkit_recurrence: true
+  test "occurrence and future scopes preserve earlier, later and unrelated events", context do
+    live = CompositionLiveSession.start(context)
+    opts = [helper: System.fetch_env!("EXMC_EVENTKIT_HELPER"), timeout: 60_000]
+    assert {:ok, sources} = EventKit.sources(:event, opts)
+    source = Enum.find(sources, & &1["default"])
+    intent = LiveEvidence.intent(live, :eventkit_calendar, %{account_id: source["id"]})
+    assert {:ok, calendar} = Calendar.create_calendar(live.marker, source["id"], opts)
+
+    CompositionLiveSession.own(
+      live,
+      :eventkit_calendar,
+      calendar.id,
+      fn -> Calendar.delete_calendar(calendar.ref, opts) end,
+      intent_id: intent,
+      verify: fn -> with {:ok, rows} <- Calendar.list_calendars(opts), do: Enum.all?(rows, &(&1.id != calendar.id)) end
+    )
+
+    base = [start_at: "2026-11-08T15:00:00Z", end_at: "2026-11-08T16:00:00Z", time_zone: "America/Denver"]
+    assert {:ok, sentinel} = Calendar.create_event(calendar.ref, [title: live.marker <> "-sentinel"] ++ base, opts)
+
+    for scope <- [:occurrence, :future] do
+      title = live.marker <> "-" <> Atom.to_string(scope)
+
+      assert {:ok, _} =
+               Calendar.create_event(
+                 calendar.ref,
+                 [title: title, recurrence: [frequency: :daily, count: 3]] ++ base,
+                 opts
+               )
+
+      before = series(calendar.ref, title, opts)
+      assert length(before) == 3
+      middle = Enum.at(before, 1)
+      assert {:error, %{details: %{outcome: :not_started}}} = Calendar.delete_event(middle.ref, opts)
+      assert :ok = Calendar.delete_event(middle.ref, Keyword.put(opts, :scope, scope))
+      after_rows = series(calendar.ref, title, opts)
+
+      expected =
+        if scope == :occurrence,
+          do: [Enum.at(before, 0).start_at, Enum.at(before, 2).start_at],
+          else: [Enum.at(before, 0).start_at]
+
+      assert Enum.map(after_rows, & &1.start_at) == expected
+      assert {:ok, _} = Calendar.get_event(sentinel.ref, opts)
+    end
+
+    title = live.marker <> "-detached"
+
+    assert {:ok, _} =
+             Calendar.create_event(
+               calendar.ref,
+               [title: title, recurrence: [frequency: :daily, count: 3]] ++ base,
+               opts
+             )
+
+    before = series(calendar.ref, title, opts)
+    middle = Enum.at(before, 1)
+
+    assert {:ok, detached} =
+             Calendar.update_event(
+               middle.ref,
+               [start_at: "2026-11-09T17:00:00Z", end_at: "2026-11-09T18:00:00Z"],
+               Keyword.put(opts, :scope, :occurrence)
+             )
+
+    assert {:ok, saved} = Calendar.get_event(detached.ref, opts)
+    assert saved.detached
+    assert saved.ref.occurrence_at == middle.ref.occurrence_at
+    assert {:error, %{type: :not_found}} = Calendar.get_event(middle.ref, opts)
+    assert :ok = Calendar.delete_event(saved.ref, Keyword.put(opts, :scope, :occurrence))
+
+    assert Enum.map(series(calendar.ref, title, opts), & &1.start_at) == [
+             Enum.at(before, 0).start_at,
+             Enum.at(before, 2).start_at
+           ]
+
+    assert {:ok, _} = Calendar.get_event(sentinel.ref, opts)
+
+    CompositionLiveSession.event(live, "verified", %{
+      occurrence: true,
+      future: true,
+      detached_exception: true,
+      unrelated_preserved: true
+    })
+  end
+
+  defp series(calendar, title, opts) do
+    assert {:ok, rows} = Calendar.list_events(calendar, "2026-11-08T00:00:00Z", "2026-11-12T00:00:00Z", opts)
+    Enum.filter(rows, &(&1.title == title))
+  end
+
   defp attrs(title, offset),
     do: [
       title: title,

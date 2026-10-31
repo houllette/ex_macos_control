@@ -31,7 +31,8 @@ extension Bridge {
             "location": event.location ?? "", "url": event.url?.absoluteString ?? "",
             "start_at": timestamp(event.startDate), "end_at": timestamp(event.endDate),
             "time_zone": event.timeZone?.identifier ?? "", "all_day": event.isAllDay,
-            "recurrence": event.hasRecurrenceRules, "detached": event.isDetached]
+            "recurrence": event.hasRecurrenceRules, "detached": event.isDetached,
+            "recurrence_rule": event.recurrenceRules?.first.map(ruleData) ?? NSNull()]
     }
 
     func event(_ value: Any?) throws -> EKEvent {
@@ -54,7 +55,7 @@ extension Bridge {
     }
 
     func eventAttributes(_ value: Any?) throws -> [String: Any] {
-        guard let attrs = value as? [String: Any], Set(attrs.keys).isSubset(of: ["title", "body", "location", "url", "start_at", "end_at", "all_day", "time_zone"]) else {
+        guard let attrs = value as? [String: Any], Set(attrs.keys).isSubset(of: ["title", "body", "location", "url", "start_at", "end_at", "all_day", "time_zone", "recurrence"]) else {
             throw BridgeFailure("execution_error", "Unknown event fields")
         }
         _ = try text(attrs["title"], "event title")
@@ -68,6 +69,7 @@ extension Bridge {
         if let url = attrs["url"] as? String, !url.isEmpty {
             guard let parsed = URL(string: url), parsed.scheme != nil else { throw BridgeFailure("execution_error", "Invalid event URL") }
         }
+        if let rule = attrs["recurrence"] { _ = try recurrenceRule(rule, start: start) }
         return attrs
     }
 
@@ -78,6 +80,41 @@ extension Bridge {
         item.timeZone = TimeZone(identifier: attrs["time_zone"] as! String)
         item.isAllDay = attrs["all_day"] as! Bool
         item.startDate = try instant(attrs["start_at"]); item.endDate = try instant(attrs["end_at"])
+    }
+
+    func recurrenceRule(_ value: Any, start: Date) throws -> EKRecurrenceRule {
+        let frequencies: [String: EKRecurrenceFrequency] = ["daily": .daily, "weekly": .weekly, "monthly": .monthly, "yearly": .yearly]
+        guard let rule = value as? [String: Any], Set(rule.keys).isSubset(of: ["frequency", "interval", "count", "until"]),
+              let name = rule["frequency"] as? String, let frequency = frequencies[name],
+              let interval = rule["interval"] as? Int, (1...365).contains(interval),
+              (rule["count"] != nil) != (rule["until"] != nil) else { throw BridgeFailure("execution_error", "Invalid bounded recurrence rule") }
+        let end: EKRecurrenceEnd
+        if let count = rule["count"] as? Int, (1...1000).contains(count) { end = EKRecurrenceEnd(occurrenceCount: count) }
+        else if let until = rule["until"] {
+            let date = try instant(until)
+            guard date >= start else { throw BridgeFailure("execution_error", "Recurrence end precedes start") }
+            end = EKRecurrenceEnd(end: date)
+        } else { throw BridgeFailure("execution_error", "Invalid recurrence count") }
+        return EKRecurrenceRule(recurrenceWith: frequency, interval: interval, end: end)
+    }
+
+    func ruleData(_ rule: EKRecurrenceRule) -> [String: Any] {
+        let names: [EKRecurrenceFrequency: String] = [.daily: "daily", .weekly: "weekly", .monthly: "monthly", .yearly: "yearly"]
+        var data: [String: Any] = ["frequency": names[rule.frequency] ?? "unknown", "interval": rule.interval]
+        if let end = rule.recurrenceEnd {
+            if let until = end.endDate { data["until"] = timestamp(until) }
+            else { data["count"] = end.occurrenceCount }
+        }
+        return data
+    }
+
+    func eventSpan(_ value: Any?, item: EKEvent) throws -> EKSpan {
+        switch value as? String {
+        case "occurrence": return .thisEvent
+        case "future": return .futureEvents
+        case nil where !item.hasRecurrenceRules && !item.isDetached: return .thisEvent
+        default: throw BridgeFailure("execution_error", "Recurring changes require scope occurrence or future")
+        }
     }
 
     func calendarOperation(_ op: String, _ input: [String: Any]) throws -> Any {
@@ -95,17 +132,18 @@ extension Bridge {
             let attrs = try eventAttributes(input["attributes"])
             let target = try calendar(input["calendar"], kind: .event); try writable(target)
             let item = EKEvent(eventStore: store); item.calendar = target; try applyEvent(attrs, to: item)
+            if let rule = attrs["recurrence"] { item.recurrenceRules = [try recurrenceRule(rule, start: item.startDate)] }
             try store.save(item, span: .thisEvent, commit: false); try commit(); return eventData(item)
         case "update_event":
             let attrs = try eventAttributes(input["attributes"]), item = try event(input["ref"])
             try writable(item.calendar)
-            guard !item.hasRecurrenceRules && !item.isDetached else { throw BridgeFailure("execution_error", "Recurring changes require an explicit occurrence scope") }
+            let span = try eventSpan(input["scope"], item: item)
             try applyEvent(attrs, to: item)
-            try store.save(item, span: .thisEvent, commit: false); try commit(); return eventData(item)
+            try store.save(item, span: span, commit: false); try commit(); return eventData(item)
         case "delete_event":
             let item = try event(input["ref"]); try writable(item.calendar)
-            guard !item.hasRecurrenceRules && !item.isDetached else { throw BridgeFailure("execution_error", "Recurring deletion requires an explicit occurrence scope") }
-            try store.remove(item, span: .thisEvent, commit: false); try commit(); return true
+            let span = try eventSpan(input["scope"], item: item)
+            try store.remove(item, span: span, commit: false); try commit(); return true
         default: throw BridgeFailure("execution_error", "Unknown EventKit operation")
         }
     }

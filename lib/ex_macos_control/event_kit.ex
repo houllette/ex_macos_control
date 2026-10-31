@@ -17,7 +17,7 @@ defmodule ExMacOSControl.EventKit do
     "not_found" => :not_found,
     "timeout" => :timeout
   }
-  @fields ~w(title body completed priority name source_id writable start_at end_at all_day time_zone recurrence detached location url)a
+  @fields ~w(title body completed priority name source_id writable start_at end_at all_day time_zone recurrence recurrence_rule detached location url)a
 
   defdelegate install(destination, opts \\ []), to: Installer
   def status(opts \\ []), do: request("status", %{}, opts)

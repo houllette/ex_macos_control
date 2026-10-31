@@ -16,7 +16,9 @@ elif op in ["create_event", "update_event"]:
     calendar_id = args["calendar"]["id"] if op == "create_event" else args["ref"]["calendar_id"]
     attrs = args["attributes"]
     ref = {"backend": "eventkit", "kind": "event", "id": identifier, "calendar_id": calendar_id, "start_at": attrs["start_at"], "occurrence_at": attrs["start_at"]}
-    result = dict(attrs, ref=ref, recurrence=False, detached=False)
+    rule = attrs.get("recurrence")
+    previous = state["items"].get(identifier, {})
+    result = dict(attrs, ref=ref, recurrence=bool(rule) or previous.get("recurrence", False), recurrence_rule=rule or previous.get("recurrence_rule"), detached=False)
     state["items"][identifier] = result
     state["mutations"] += 1
 elif op == "get_event":
