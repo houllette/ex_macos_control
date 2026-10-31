@@ -3,12 +3,21 @@ defmodule ExMacOSControl.Capture do
   Captures native sources once and converts immutable snapshots without app access.
 
   Snapshot provenance retains native IDs and captured_at; it does not promise
-  that a source still exists. Files retain paths, not copies of their contents.
+  that a source still exists. Files retain paths. stage_files/3 optionally copies them into a new private directory.
   `render/2` supports :plain, :html and :reference. Reference content uses the
   URL and selection for pages; full content falls back to page text.
   """
   alias ExMacOSControl.{Calendar, Composition, Finder, HTML, Mail, Notes, Safari, StandardAdditions}
-  alias ExMacOSControl.Capture.{Event, Files, Message, Page, Text}
+  alias ExMacOSControl.Capture.{Event, Files, Message, Page, StagedFiles, Staging, Text}
+
+  @doc "Copies a file capture with checksums. Destination must be new, with an existing parent. max_bytes bounds the total bytes (default 1 GiB)."
+  defdelegate stage_files(capture, destination, opts \\ []), to: Staging, as: :stage
+  @doc "Checks staged file identity and contents. Paths-only captures need no content verification."
+  def verify_files(capture, opts \\ [])
+  def verify_files(%StagedFiles{} = capture, opts), do: Staging.verify(capture, opts)
+  def verify_files(_capture, _opts), do: :ok
+  @doc "Removes verified owned copies and their empty directory; refuses changed or foreign entries."
+  defdelegate cleanup_files(capture, opts \\ []), to: Staging, as: :cleanup
 
   def page(target, opts \\ []) do
     with {:ok, data} <- Safari.snapshot(target, opts) do
@@ -89,6 +98,7 @@ defmodule ExMacOSControl.Capture do
   def title(%Text{title: title}), do: nonempty(title, "Untitled")
   def title(%Message{subject: subject}), do: nonempty(subject, "Message")
   def title(%Event{title: title}), do: nonempty(title, "Event")
+  def title(%StagedFiles{paths: paths}), do: "#{length(paths)} staged files"
   def title(%Files{paths: paths}), do: "#{length(paths)} selected files"
 
   def render(capture, format \\ :plain)
@@ -96,6 +106,7 @@ defmodule ExMacOSControl.Capture do
   def render(%Page{} = page, :plain), do: page.url <> "\n\n" <> nonempty(page.selection, page.text)
   def render(%Page{} = page, :reference), do: page.url <> "\n\n" <> page.selection
   def render(%Text{text: text}, :plain), do: text
+  def render(%StagedFiles{paths: paths}, :plain), do: Enum.join(paths, "\n")
   def render(%Files{paths: paths}, :plain), do: Enum.join(paths, "\n")
 
   def render(%Message{} = message, :plain),
@@ -106,6 +117,7 @@ defmodule ExMacOSControl.Capture do
 
   def render(capture, :reference), do: render(capture, :plain)
 
+  def files(%StagedFiles{paths: paths}), do: paths
   def files(%Files{paths: paths}), do: paths
   def files(_), do: []
   def source(%{source: source}), do: source
