@@ -239,7 +239,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
   Returns event_id and reminder_id. No effect is retried.
   """
   def reminder_to_event(reminder_id, calendar_id, attributes, opts \\ []) do
-    with :ok <- Automation.options(opts, @execution ++ [:complete_reminder, :verify_event]),
+    with :ok <- Automation.options(opts, @execution ++ [:complete_reminder, :verify_event, :list_id]),
          :ok <-
            Automation.options(attributes, [
              :title,
@@ -316,7 +316,7 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   defp maybe_complete(id, opts) do
     if opts[:complete_reminder],
-      do: Composition.effect(:complete_reminder, fn -> Reminders.complete_reminder(id) end),
+      do: Composition.effect(:complete_reminder, fn -> Reminders.complete_reminder(id, list_id: opts[:list_id]) end),
       else: :ok
   end
 
@@ -426,7 +426,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   end
 
   defp do_reminder_to_event(reminder_id, calendar_id, attributes, opts) do
-    with {:ok, reminder} <- Composition.step(:read_reminder, fn -> Reminders.get_reminder(reminder_id) end),
+    with {:ok, reminder} <-
+           Composition.step(:read_reminder, fn -> Reminders.get_reminder(reminder_id, list_id: opts[:list_id]) end),
          attrs =
            attributes
            |> Keyword.put_new(:title, reminder.title)
@@ -439,15 +440,38 @@ defmodule ExMacOSControl.Workflows.Recipes do
   end
 
   defp maybe_verify_event(calendar_id, id, attrs, opts) do
-    if opts[:verify_event] do
-      Composition.verify(:created_event, &event_matches?(calendar_id, id, attrs, &1))
-    else
-      :ok
+    if opts[:verify_event], do: verify_event(calendar_id, id, attrs), else: :ok
+  end
+
+  defp verify_event(calendar_id, id, attrs) do
+    key = make_ref()
+
+    try do
+      case Composition.verify(:created_event, &event_matches?(calendar_id, id, attrs, key, &1)) do
+        {:error, error} ->
+          {:error,
+           %{
+             error
+             | details:
+                 Map.put(error.details || %{}, :event_verification, %{
+                   calendar_id: calendar_id,
+                   event_id: id,
+                   expected: Map.new(attrs),
+                   observed: Process.get(key)
+                 })
+           }}
+
+        result ->
+          result
+      end
+    after
+      Process.delete(key)
     end
   end
 
-  defp event_matches?(calendar, id, attrs, remaining) do
+  defp event_matches?(calendar, id, attrs, key, remaining) do
     with {:ok, event} <- Calendar.get_event(calendar, id, timeout: remaining) do
+      Process.put(key, Map.take(event, Keyword.keys(attrs)))
       Enum.all?(attrs, &event_field_matches?(&1, event))
     end
   end
@@ -462,6 +486,9 @@ defmodule ExMacOSControl.Workflows.Recipes do
       _ -> false
     end
   end
+
+  defp event_field_matches?({key, expected}, event) when key in [:description, :location, :url, :recurrence],
+    do: (Map.get(event, key) || "") == (expected || "")
 
   defp event_field_matches?({key, expected}, event), do: Map.get(event, key) == expected
 

@@ -10,6 +10,8 @@ defmodule ExMacOSControl.Composition.Journal do
   Inspect a run after its owner has stopped; an active run can also have pending intents.
   A callback error during an effect is uncertain unless it explicitly reports
   :not_started: a script may have changed an app before reporting an error.
+  Inspection defaults to a 64 MiB bound; max_bytes may lower that bound. Long
+  valid runs above the former 2 MiB limit remain inspectable.
   """
   import Bitwise
   alias ExMacOSControl.Error
@@ -48,10 +50,13 @@ defmodule ExMacOSControl.Composition.Journal do
   def close(nil), do: :ok
   def close(journal), do: File.close(journal.io)
 
-  def inspect_run(path) do
-    with :ok <- safe_ancestors(Path.dirname(path)),
+  def inspect_run(path, opts \\ []) do
+    with :ok <- ExMacOSControl.Automation.options(opts, [:max_bytes]),
+         limit = Keyword.get(opts, :max_bytes, 67_108_864),
+         true <- is_integer(limit) and limit in 1..67_108_864,
+         :ok <- safe_ancestors(Path.dirname(path)),
          {:ok, %{type: :regular, mode: mode, size: size}} <- File.lstat(path),
-         true <- (mode &&& 0o077) == 0 and size <= 2_097_152,
+         true <- (mode &&& 0o077) == 0 and size <= limit,
          {:ok, data} <- File.read(path),
          {:ok, records, truncated} <- decode(data) do
       {:ok, summary(records, truncated)}

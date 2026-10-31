@@ -21,10 +21,14 @@ defmodule ExMacOSControl.Safari.Compositions do
     Automation.action(
       "com.apple.Safari",
       """
-      var w=app.windows.byId(input.window_id);
-      if(w.exists()){
-        if(w.tabs.length!==1)throw new Error('Owned Safari window has additional tabs; refusing cleanup');
-        app.close(w);
+      var windows=app.windows(),w=null;
+      for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
+      if(w){
+        var tabs=w.tabs();
+        if(tabs && tabs.length>0){
+          if(tabs.length!==1)throw new Error('Owned Safari window has additional tabs; refusing cleanup');
+          app.close(w);
+        }
       }
       """,
       %{window_id: page.window_id},
@@ -153,9 +157,7 @@ defmodule ExMacOSControl.Safari.Compositions do
   def fill_fields(%Page{} = page, fields, opts \\ []) do
     with :ok <- Validation.items(fields),
          true <-
-           Enum.all?(fields, fn item ->
-             match?({selector, value} when is_binary(selector) and is_binary(value), item)
-           end),
+           Enum.all?(fields, &valid_field?/1),
          :ok <- waiting_options(opts) do
       Composition.run(
         fn -> do_fill_fields(page, fields, opts) end,
@@ -204,8 +206,9 @@ defmodule ExMacOSControl.Safari.Compositions do
            Composition.step(:navigation_marker, fn ->
              dom(page, "window.__exmc_navigation=input.token;return location.href;", %{token: token})
            end),
-         :ok <- Composition.effect(:navigate_page, fn -> Safari.navigate(page.window_id, page.tab_index, url) end) do
-      same_document = hd(String.split(previous, "#", parts: 2)) == hd(String.split(url, "#", parts: 2))
+         :ok <- Composition.effect(:navigate_page, fn -> dispatch_navigation(page, previous, url) end) do
+      same_document =
+        previous != url and hd(String.split(previous, "#", parts: 2)) == hd(String.split(url, "#", parts: 2))
 
       poll(
         page,
@@ -215,6 +218,16 @@ defmodule ExMacOSControl.Safari.Compositions do
       )
     end
   end
+
+  defp dispatch_navigation(page, previous, url) when previous == url,
+    do: dom_action(page, "location.reload();", %{})
+
+  defp dispatch_navigation(page, _previous, url), do: Safari.navigate(page.window_id, page.tab_index, url)
+
+  defp valid_field?({selector, value}) when is_binary(selector) and is_binary(value),
+    do: String.trim(selector) != "" and not String.contains?(selector, <<0>>)
+
+  defp valid_field?(_), do: false
 
   defp poll(page, body, params, opts) do
     with :ok <- waiting_options(opts) do
@@ -238,9 +251,13 @@ defmodule ExMacOSControl.Safari.Compositions do
     Automation.query(
       "com.apple.Safari",
       """
-      var w=byId(app.windows,input.window_id);
-      if(input.owned && w.tabs.length!==1)throw new Error('Owned Safari window has additional tabs');
-      var t=w.tabs[input.tab_index-1];if(!t.exists())throw new Error('Tab not found');
+      var windows=app.windows(),w=null;
+      for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
+      if(!w)throw new Error('Safari window not found');
+      var tabs=w.tabs();
+      if(!tabs || tabs.length===0)throw new Error('Safari window has no tabs');
+      if(input.owned && tabs.length!==1)throw new Error('Owned Safari window has additional tabs');
+      var t=tabs[input.tab_index-1];if(!t)throw new Error('Tab not found');
       return JSON.parse(app.doJavaScript(input.code,{in:t}));
       """,
       %{window_id: page.window_id, tab_index: page.tab_index, owned: page.owned, code: code},
@@ -248,7 +265,9 @@ defmodule ExMacOSControl.Safari.Compositions do
     )
   end
 
-  defp element, do: "var e=document.querySelector(input.selector);if(!e)throw new Error('Element not found');"
+  defp element,
+    do:
+      "var matches=document.querySelectorAll(input.selector);if(matches.length!==1)throw new Error('Missing or ambiguous element');var e=matches[0];"
 
   defp waiting_options(opts) do
     with :ok <- Automation.options(opts, @waiting),

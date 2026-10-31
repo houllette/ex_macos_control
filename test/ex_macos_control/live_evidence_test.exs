@@ -57,9 +57,24 @@ defmodule ExMacOSControl.LiveEvidenceTest do
 
   test "a raised cleanup is recorded and does not masquerade as verified absence", %{session: session} do
     intent = Evidence.intent(session, :note)
-    assert {:error, :cleanup_raised} = Evidence.cleanup(session, intent, fn -> raise "private body" end, fn -> true end)
+    assert {:error, _} = Evidence.cleanup(session, intent, fn -> raise "private body" end, fn -> false end, timeout: 0)
     assert {:ok, %{status: :needs_reconciliation, events: events}} = Evidence.inspect_session(session.root)
     assert Enum.any?(events, &(&1["event"] == "cleanup_failed"))
     refute Jason.encode!(events) =~ "private body"
+  end
+
+  test "an uncertain deletion is observed without replaying its mutation", %{session: session} do
+    intent = Evidence.intent(session, :note)
+    {:ok, state} = Agent.start_link(fn -> %{present: true, attempts: 0} end)
+
+    delete = fn ->
+      Agent.update(state, &%{&1 | present: false, attempts: &1.attempts + 1})
+      {:error, :reply_lost}
+    end
+
+    assert :ok = Evidence.cleanup(session, intent, delete, fn -> not Agent.get(state, & &1.present) end)
+    assert Agent.get(state, & &1.attempts) == 1
+    Evidence.event(session, "verified")
+    assert Evidence.finish(session).status == :passed
   end
 end

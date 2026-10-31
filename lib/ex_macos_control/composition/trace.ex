@@ -26,7 +26,7 @@ defmodule ExMacOSControl.Composition.Trace do
 
         case emit(context, :run_finished, %{outcome: outcome(result), duration: System.monotonic_time() - started}) do
           :ok -> result
-          error -> error
+          {:error, journal_error} -> journal_failure(result, journal_error, context)
         end
       end
     catch
@@ -66,8 +66,12 @@ defmodule ExMacOSControl.Composition.Trace do
         })
 
       case emit(context, :step_finished, ending) do
-        :ok -> result
-        {:error, error} -> {:error, %{error | details: Map.put(error.details, :acknowledged_result, result)}}
+        :ok ->
+          result
+
+        {:error, error} ->
+          track_progress(context, kind, :unknown)
+          {:error, %{error | details: Map.put(error.details, :acknowledged_result, result)}}
       end
     catch
       kind, reason ->
@@ -132,6 +136,16 @@ defmodule ExMacOSControl.Composition.Trace do
 
   defp correlate(result, _context), do: result
 
+  defp journal_failure({:error, %Error{} = error}, journal_error, context),
+    do: correlate({:error, %{error | details: Map.put(error.details || %{}, :journal_error, journal_error)}}, context)
+
+  defp journal_failure(result, journal_error, context),
+    do:
+      correlate(
+        {:error, %{journal_error | details: Map.put(journal_error.details || %{}, :acknowledged_result, result)}},
+        context
+      )
+
   defp label(value) when is_atom(value), do: Atom.to_string(value)
   defp label(value) when is_integer(value), do: value
   defp label(value) when is_tuple(value), do: value |> Tuple.to_list() |> Enum.map(&label/1)
@@ -143,6 +157,7 @@ defmodule ExMacOSControl.Composition.Trace do
 
   defp resources(name, result, %{type: type, identity: identity}) do
     values = resources(name, result, type)
+    identity = Map.delete(identity, :ids)
 
     cond do
       values != [] -> Enum.map(values, &Map.merge(identity, &1))
