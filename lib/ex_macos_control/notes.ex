@@ -5,6 +5,7 @@ defmodule ExMacOSControl.Notes do
   List calls are paged; execution options include timeout and max_output_bytes.
   """
   alias ExMacOSControl.{Automation, Composition, HTML, Resources}
+  alias ExMacOSControl.Desktop.Session
   @app "com.apple.Notes"
   @summary [
     id: "o.id()",
@@ -159,7 +160,8 @@ defmodule ExMacOSControl.Notes do
   def duplicate_note(id, opts \\ []) do
     with :ok <- Automation.options(opts, [:folder_id, :title, :timeout, :max_output_bytes]),
          :ok <- Automation.required_string(Keyword.get(opts, :title, "Copy"), "Note title") do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.Notes"],
         fn -> do_duplicate_note(id, opts) end,
         Keyword.take(opts, [:timeout, :max_output_bytes])
       )

@@ -19,6 +19,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
     Validation
   }
 
+  alias ExMacOSControl.Desktop.Session
+
   @execution [:timeout, :max_output_bytes]
   @note [:folder_id, :title]
   @reminder [:title, :due_at, :reminder_at, :priority, :flagged]
@@ -28,7 +30,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def selection_to_shortcut(identifier, opts \\ []) do
     with :ok <- Automation.required_string(identifier, "Shortcut identity"),
          :ok <- Automation.options(opts, @execution ++ @shortcut) do
-      Finder.with_selection(
+      with_selection(
+        [],
         fn paths ->
           Composition.effect(:run_shortcut, &Shortcuts.run/2, [
             identifier,
@@ -43,7 +46,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Creates a Mail draft attaching selected Finder files. Mail options are passed separately."
   def selection_to_draft(mail_options, opts \\ []) do
     with :ok <- mail_options(mail_options) do
-      Finder.with_selection(
+      with_selection(
+        ["com.apple.mail"],
         fn paths ->
           Composition.effect(:create_draft, &Mail.create_draft/1, [Keyword.put(mail_options, :attachments, paths)])
         end,
@@ -54,7 +58,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
 
   def selection_to_verified_draft(mail_options, opts \\ []) do
     with :ok <- mail_options(mail_options) do
-      Finder.with_selection(
+      with_selection(
+        ["com.apple.mail"],
         fn paths ->
           Mail.create_verified_draft(Keyword.put(mail_options, :attachments, paths))
         end,
@@ -66,28 +71,29 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Sends selected Finder files to an explicit Messages chat ID. Real sends, attempted once each."
   def selection_to_chat(chat_id, opts \\ []) do
     with :ok <- Automation.required_string(chat_id, "Chat ID") do
-      Finder.with_selection(&Messages.send_files_to_chat(chat_id, &1), opts)
+      with_selection(["com.apple.MobileSMS"], &Messages.send_files_to_chat(chat_id, &1), opts)
     end
   end
 
   @doc "Sends the current Safari page URL and selected text to an explicit Messages chat ID, once."
   def current_page_to_chat(chat_id, opts \\ []) do
     with :ok <- Automation.required_string(chat_id, "Chat ID") do
-      Composition.run(&send_page/1, [chat_id], opts)
+      run(["com.apple.MobileSMS"], &send_page/1, [chat_id], opts)
     end
   end
 
   @doc "Sends captured clipboard text to an explicit Messages chat ID, once."
   def clipboard_to_chat(chat_id, opts \\ []) do
     with :ok <- Automation.required_string(chat_id, "Chat ID") do
-      Composition.run(&send_clipboard/1, [chat_id], opts)
+      run(["com.apple.MobileSMS"], &send_clipboard/1, [chat_id], opts)
     end
   end
 
   @doc "Imports selected Finder files into a new Photos album. Supports folder_id and skip_duplicates."
   def selection_to_album(name, opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ [:folder_id, :skip_duplicates]) do
-      Finder.with_selection(
+      with_selection(
+        ["com.apple.Photos"],
         fn paths -> Photos.import_into_new_album(paths, name, Keyword.drop(opts, @execution)) end,
         Keyword.take(opts, @execution)
       )
@@ -97,7 +103,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Applies Image Events steps to selected Finder files. Supports format and execution limits."
   def selection_to_images(destination, steps, opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ [:format]) do
-      Finder.with_selection(
+      with_selection(
+        [],
         fn paths -> ImageEvents.process_many(paths, destination, steps, Keyword.take(opts, [:format])) end,
         Keyword.take(opts, @execution)
       )
@@ -107,7 +114,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Saves the current Safari page to Notes. Uses selected text when present, otherwise page text; supports title/folder_id."
   def current_page_to_note(opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ @note) do
-      Composition.run(
+      run(
+        ["com.apple.Notes"],
         fn -> do_current_page_to_note(opts) end,
         Keyword.take(opts, @execution)
       )
@@ -118,7 +126,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def current_page_to_reminder(list_id, opts \\ []) do
     with :ok <- Automation.required_string(list_id, "Reminder list ID"),
          :ok <- Automation.options(opts, @execution ++ @reminder) do
-      Composition.run(
+      run(
+        ["com.apple.reminders"],
         fn -> do_current_page_to_reminder(list_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -128,7 +137,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Creates a Mail draft containing the current Safari page URL and selected text."
   def current_page_to_draft(mail_options, opts \\ []) do
     with :ok <- mail_options(mail_options) do
-      Composition.run(
+      run(
+        ["com.apple.mail"],
         fn -> do_current_page_to_draft(mail_options) end,
         opts
       )
@@ -139,7 +149,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def clipboard_to_note(title, opts \\ []) do
     with :ok <- Automation.required_string(title, "Note title"),
          :ok <- Automation.options(opts, @execution ++ [:folder_id]) do
-      Composition.run(
+      run(
+        ["com.apple.Notes"],
         fn -> do_clipboard_to_note(title, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -151,7 +162,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
     with :ok <- Automation.required_string(list_id, "Reminder list ID"),
          :ok <- Automation.required_string(title, "Reminder title"),
          :ok <- Automation.options(opts, @execution ++ @reminder) do
-      Composition.run(
+      run(
+        ["com.apple.reminders"],
         fn -> do_clipboard_to_reminder(list_id, title, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -162,7 +174,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def clipboard_to_shortcut(identifier, opts \\ []) do
     with :ok <- Automation.required_string(identifier, "Shortcut identity"),
          :ok <- Automation.options(opts, @execution ++ @shortcut) do
-      Composition.run(
+      run(
+        [],
         fn -> do_clipboard_to_shortcut(identifier, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -172,7 +185,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Runs a Shortcut and replaces the text clipboard with its text output. Empty output writes an empty string."
   def shortcut_to_clipboard(identifier, input, opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ [:trim]) do
-      Composition.run(
+      run(
+        [],
         fn -> do_shortcut_to_clipboard(identifier, input, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -182,7 +196,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Copies a Mail message's subject, sender and text to Notes; supports title/folder_id."
   def message_to_note(account_id, mailbox, message_id, opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ @note) do
-      Composition.run(
+      run(
+        ["com.apple.mail", "com.apple.Notes"],
         fn -> do_message_to_note(account_id, mailbox, message_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -193,7 +208,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def message_to_reminder(account_id, mailbox, message_id, list_id, opts \\ []) do
     with :ok <- Automation.required_string(list_id, "Reminder list ID"),
          :ok <- Automation.options(opts, @execution ++ @reminder) do
-      Composition.run(
+      run(
+        ["com.apple.mail", "com.apple.reminders"],
         fn -> do_message_to_reminder(account_id, mailbox, message_id, list_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -203,7 +219,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   @doc "Creates a Note with an event's title, dates, location and description. Supports title/folder_id."
   def event_to_note(calendar_id, event_id, opts \\ []) do
     with :ok <- Automation.options(opts, @execution ++ @note) do
-      Composition.run(
+      run(
+        ["com.apple.iCal", "com.apple.Notes"],
         fn -> do_event_to_note(calendar_id, event_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -214,7 +231,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def event_to_reminder(calendar_id, event_id, list_id, opts \\ []) do
     with :ok <- Automation.required_string(list_id, "Reminder list ID"),
          :ok <- Automation.options(opts, @execution ++ @reminder) do
-      Composition.run(
+      run(
+        ["com.apple.iCal", "com.apple.reminders"],
         fn -> do_event_to_reminder(calendar_id, event_id, list_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -225,7 +243,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
   def note_to_reminder(note_id, list_id, opts \\ []) do
     with :ok <- Automation.required_string(list_id, "Reminder list ID"),
          :ok <- Automation.options(opts, @execution ++ @reminder) do
-      Composition.run(
+      run(
+        ["com.apple.Notes", "com.apple.reminders"],
         fn -> do_note_to_reminder(note_id, list_id, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -254,7 +273,8 @@ defmodule ExMacOSControl.Workflows.Recipes do
          true <-
            is_boolean(Keyword.get(opts, :complete_reminder, false)) and
              is_boolean(Keyword.get(opts, :verify_event, false)) do
-      Composition.run(
+      run(
+        ["com.apple.reminders", "com.apple.iCal"],
         fn -> do_reminder_to_event(reminder_id, calendar_id, attributes, opts) end,
         Keyword.take(opts, @execution)
       )
@@ -283,6 +303,13 @@ defmodule ExMacOSControl.Workflows.Recipes do
       {:error, _} = error -> error
       _ -> Automation.invalid("Workspace folder must exist")
     end
+  end
+
+  defp run(apps, fun, opts), do: Session.with_apps(apps, fun, opts)
+  defp run(apps, fun, args, opts), do: Session.with_apps(apps, fn -> apply(fun, args) end, opts)
+
+  defp with_selection(apps, fun, opts) do
+    Finder.with_selection(fn paths -> Session.with_apps(apps, fn -> fun.(paths) end) end, opts)
   end
 
   defp capture_page do

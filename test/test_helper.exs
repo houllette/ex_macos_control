@@ -29,3 +29,6 @@ IO.puts(platform_info)
 if System.get_env("EXMC_LIVE_TESTS") == "1" and System.get_env("EXMC_PERSONAL_TESTS") == "1" do
   ExUnit.configure(formatters: [ExUnit.CLIFormatter, ExMacOSControl.LiveEvidenceFormatter])
 end
+
+# Live sessions switch this backend per test; unit cases never touch the desktop.
+Application.put_env(:ex_macos_control, :desktop_session_backend, ExMacOSControl.HeadlessDesktop)

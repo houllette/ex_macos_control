@@ -8,6 +8,7 @@ defmodule ExMacOSControl.Applications do
   when it still exists; it never quits an application.
   """
   alias ExMacOSControl.{Automation, Command, Composition, Desktop, Error, Wait}
+  alias ExMacOSControl.Desktop.Session
 
   @doc "Resolves an installed application and reports its running process without launching it."
   def status(identity, opts \\ []) do
@@ -87,7 +88,8 @@ defmodule ExMacOSControl.Applications do
 
   @doc "Runs a tagged-result callback with the app frontmost, then restores previous focus."
   def with_frontmost(identity, fun, opts \\ []) when is_function(fun, 1) do
-    Desktop.with_lock(
+    Session.with_apps(
+      [identity],
       fn -> do_with_frontmost(identity, fun) end,
       opts
     )

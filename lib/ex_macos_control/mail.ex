@@ -50,6 +50,7 @@ defmodule ExMacOSControl.Mail do
   """
 
   alias ExMacOSControl.{Automation, Composition, Error, ScriptOutput}
+  alias ExMacOSControl.Desktop.Session
 
   # Get the adapter at runtime to support integration test configuration
   defp adapter do
@@ -459,7 +460,8 @@ defmodule ExMacOSControl.Mail do
 
   defp create_from_capture(capture, opts, create) do
     with {:ok, attrs} <- draft_from_options(capture, opts) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.mail"],
         fn -> verified_capture_handoff(capture, attrs, create) end,
         Keyword.take(opts, [:timeout, :max_output_bytes])
       )
@@ -597,7 +599,8 @@ defmodule ExMacOSControl.Mail do
   """
   def save_attachments(account_id, mailbox, id, destination, opts \\ []) do
     if is_binary(destination) and File.dir?(destination) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.mail"],
         fn -> do_save_attachments(account_id, mailbox, id, destination) end,
         opts
       )
@@ -614,7 +617,8 @@ defmodule ExMacOSControl.Mail do
   def draft_reply(account_id, mailbox, id, opts \\ []) do
     with :ok <- Automation.options(opts, [:body, :sender, :cc, :bcc, :timeout, :max_output_bytes]),
          true <- is_binary(Keyword.get(opts, :body, "")) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.mail"],
         fn -> do_draft_reply(account_id, mailbox, id, opts) end,
         Keyword.take(opts, [:timeout, :max_output_bytes])
       )

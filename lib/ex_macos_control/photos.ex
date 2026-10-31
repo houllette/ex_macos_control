@@ -1,6 +1,7 @@
 defmodule ExMacOSControl.Photos do
   @moduledoc "Photos albums, folders, media metadata, import/export and slideshow controls. Media is addressed by Photos IDs."
   alias ExMacOSControl.{Automation, Composition, Resources, Validation}
+  alias ExMacOSControl.Desktop.Session
   @app "com.apple.Photos"
   @fields [
     id: "o.id()",
@@ -149,7 +150,8 @@ defmodule ExMacOSControl.Photos do
          true <- Enum.all?(paths, &(is_binary(&1) and File.regular?(&1))),
          :ok <- Automation.options(opts, [:folder_id, :skip_duplicates, :timeout, :max_output_bytes]),
          true <- is_boolean(Keyword.get(opts, :skip_duplicates, true)) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.Photos"],
         fn -> do_import_into_new_album(paths, name, opts) end,
         Keyword.take(opts, [:timeout, :max_output_bytes])
       )

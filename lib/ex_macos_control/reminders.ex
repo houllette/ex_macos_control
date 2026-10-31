@@ -1,6 +1,7 @@
 defmodule ExMacOSControl.Reminders do
   @moduledoc "Accounts, lists and reminders with explicit list IDs, dates, priorities and completion state. For long GUI workflows, Applications.open/2 with background: true establishes normal UI startup; a launch-only app can automatically terminate without windows."
   alias ExMacOSControl.{Automation, Composition, Error, Resources, Validation}
+  alias ExMacOSControl.Desktop.Session
   @app "com.apple.reminders"
   @fields [
     id: "o.id()",
@@ -150,7 +151,8 @@ defmodule ExMacOSControl.Reminders do
     with :ok <- Automation.required_string(list_id, "List ID"),
          :ok <- Validation.items(items),
          :ok <- Validation.all(items, &validate_reminder/1) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.reminders"],
         fn ->
           Composition.map_effects(items, :create_reminder, &create_reminder(list_id, &1),
             resource: :reminder,
@@ -174,7 +176,8 @@ defmodule ExMacOSControl.Reminders do
          :ok <- Validation.items(ids),
          :ok <- Validation.all(ids, &Automation.required_string(&1, "Reminder ID")),
          :ok <- unique_ids(ids) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.reminders"],
         fn -> do_complete_many(ids, opts[:list_id]) end,
         Keyword.delete(opts, :list_id)
       )

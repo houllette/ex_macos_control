@@ -56,7 +56,7 @@ defmodule ExMacOSControl.UtilitiesIntegrationTest do
     marker = Path.join(directory, "first")
     second = Path.join(directory, "second")
 
-    assert :ok = Terminal.do_script("printf first > '#{marker}'")
+    assert :ok = Terminal.do_script("printf first > '#{marker}'", keep_open: true)
     assert :ok = Wait.until(fn -> File.exists?(marker) end, timeout: 5000)
     assert {:ok, after_sessions} = Terminal.list_sessions()
     assert [session] = Enum.reject(after_sessions, &MapSet.member?(original_ids, &1.window_id))

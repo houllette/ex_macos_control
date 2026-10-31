@@ -1,6 +1,7 @@
 defmodule ExMacOSControl.Safari.Compositions do
   @moduledoc false
   alias ExMacOSControl.{Automation, Composition, Desktop, Error, Validation, Wait}
+  alias ExMacOSControl.Desktop.Session
   alias ExMacOSControl.Safari.Page
 
   @instance """
@@ -75,7 +76,8 @@ defmodule ExMacOSControl.Safari.Compositions do
 
   def with_page(url, opts \\ [], fun) when is_function(fun, 1) do
     with :ok <- waiting_options(opts) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.Safari"],
         fn -> do_with_page(url, opts, fun) end,
         Keyword.take(opts, @execution)
       )

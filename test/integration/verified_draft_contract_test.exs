@@ -149,7 +149,7 @@ defmodule ExMacOSControl.VerifiedDraftContractTest do
     var draft={exists:function(){return saved;},subject:function(){return 'original';},messageId:function(){return 'native';}};
     var compose={id:function(){return 999;},subject:function(){return #{Jason.encode!(subject)};}};
     var messages={id:function(){return saved?[42]:[];},byId:function(){return draft;}};
-    var outgoingMessages=function(){return outgoing?[compose]:[];};outgoingMessages.id=function(){return outgoing?[999]:[];};
+    var outgoingMessages=function(){return outgoing?[compose]:[];};outgoingMessages.id=function(){return outgoing?[999]:[];};outgoingMessages.byId=function(id){if(id!==999)throw new Error("Wrong outgoing ID");return compose;};
     var fixture={draftsMailbox:function(){return {messages:messages};},outgoingMessages:outgoingMessages,
       close:function(o,options){if(!closeAllowed)throw new Error('Must not close a different compose object');
         if(o!==compose||options.saving!=='no')throw new Error('Wrong close target or save policy');outgoing=false;saved=false;},
