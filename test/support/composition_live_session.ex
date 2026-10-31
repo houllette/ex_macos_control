@@ -117,6 +117,20 @@ defmodule ExMacOSControl.CompositionLiveSession do
          do: query(bundle, "var ids=app.#{collection}.id();return !ids || ids.indexOf(input.id)<0;", %{id: id})
   end
 
+  def draft_absent(draft) do
+    query(
+      "com.apple.mail",
+      """
+      if(app.draftsMailbox().messages.id().map(String).indexOf(String(input.id))>=0)return false;
+      ObjC.import('AppKit');var process=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($('com.apple.mail')).firstObject;
+      if(input.pid && !process.isNil() && Number(process.processIdentifier)===input.pid)
+        return app.outgoingMessages.id().map(String).indexOf(String(input.outgoing_id))<0;
+      return true;
+      """,
+      %{id: draft.id, outgoing_id: draft.outgoing_id, pid: draft.mail_pid}
+    )
+  end
+
   defp app_version(identity) do
     case Capabilities.app(identity) do
       {:ok, app} -> Map.take(app, [:bundle_id, :version, :build])

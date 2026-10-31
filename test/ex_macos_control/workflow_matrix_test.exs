@@ -137,7 +137,7 @@ defmodule ExMacOSControl.WorkflowMatrixTest do
   defp query(%{"__bundle_id" => "com.apple.Photos"}, _), do: "album"
   defp query(%{"__bundle_id" => "com.apple.imageevents"}, _), do: true
   defp query(%{"__bundle_id" => "com.apple.mail", "before" => _}, _), do: [%{id: 7, message_id: "saved"}]
-  defp query(%{"__bundle_id" => "com.apple.mail", "subject" => _}, _), do: []
+  defp query(%{"__bundle_id" => "com.apple.mail", "subject" => _}, _), do: %{ids: [], pid: 42}
 
   defp query(%{"__bundle_id" => "com.apple.mail", "id" => _}, _),
     do: %{subject: "Title", sender: "self@example.invalid", content: "Body"}

@@ -447,7 +447,8 @@ defmodule ExMacOSControl.Mail do
   @doc "Creates once, then verifies a newly saved message and returns a durable Draft reference. Never sends."
   defdelegate create_verified_draft(opts), to: ExMacOSControl.Mail.Compositions, as: :create
   defdelegate get_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :get
-  @doc "Deletes the saved draft only when its captured identity still matches."
+
+  @doc "Deletes a saved draft and its process-bound compose object after checking their captured identities; verifies absence without replaying deletion."
   defdelegate delete_draft(draft, opts \\ []), to: ExMacOSControl.Mail.Compositions, as: :delete
 
   @doc "Creates a draft from captured content. File captures attach their paths; other captures supply text."
