@@ -157,9 +157,17 @@ defmodule ExMacOSControl.WorkflowsTest do
       {:ok, ""}
     end)
 
-    expect(ExMacOSControl.AdapterMock, :run_applescript, fn _, opts ->
-      assert opts[:args] == ["https://example.invalid"]
-      {:ok, "42"}
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, opts ->
+      assert input(opts)["url"] == "https://example.invalid"
+
+      response(%{
+        window_id: 42,
+        tab_index: 1,
+        url: "https://example.invalid",
+        owned: true,
+        application_pid: 42,
+        application_started_at: 123.5
+      })
     end)
 
     assert {:ok, %{folder: ^directory, applications: [%{pid: 42}], pages: [%{window_id: 42, owned: true}]}} =

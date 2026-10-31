@@ -1,7 +1,37 @@
 defmodule ExMacOSControl.Safari.Compositions do
   @moduledoc false
-  alias ExMacOSControl.{Automation, Composition, Desktop, Error, Safari, Validation, Wait}
+  alias ExMacOSControl.{Automation, Composition, Desktop, Error, Validation, Wait}
   alias ExMacOSControl.Safari.Page
+
+  @instance """
+  function safariInstance(){
+    ObjC.import('AppKit');
+    var all=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($('com.apple.Safari'));
+    if(Number(all.count)!==1)throw new Error('Safari application instance is missing or ambiguous');
+    var p=all.firstObject,started=p.launchDate;
+    if(started.isNil())throw new Error('Safari launch identity unavailable');
+    return {application_pid:Number(p.processIdentifier),application_started_at:Number(started.timeIntervalSince1970)};
+  }
+  function guardInstance(expected){
+    if(expected.application_pid===null && expected.application_started_at===null)return;
+    var actual=safariInstance();
+    if(actual.application_pid!==expected.application_pid || actual.application_started_at!==expected.application_started_at)
+      throw new Error('Safari application instance changed');
+  }
+  """
+  @document_guard """
+  if(guard.expected_url!==null && location.href!==guard.expected_url)throw new Error('Safari document URL changed');
+  if(guard.document_token!==null && document.__exmc_document!==guard.document_token)throw new Error('Safari document changed');
+  """
+
+  @execute_dom """
+  function runDOM(tab){
+    var reply=JSON.parse(app.doJavaScript(input.code,{in:tab}));
+    if(!reply || reply.exmc_dom!==1)throw new Error('Invalid Safari document acknowledgement');
+    if(reply.ok!==true)throw new Error(reply.error || 'Safari document operation failed');
+    return reply.result;
+  }
+  """
 
   @execution [:timeout, :max_output_bytes]
   @waiting @execution ++ [:interval]
@@ -20,18 +50,23 @@ defmodule ExMacOSControl.Safari.Compositions do
   def close_page(%Page{owned: true} = page, opts) do
     Automation.action(
       "com.apple.Safari",
-      """
-      var windows=app.windows(),w=null;
-      for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
-      if(w){
-        var tabs=w.tabs();
-        if(tabs && tabs.length>0){
-          if(tabs.length!==1)throw new Error('Owned Safari window has additional tabs; refusing cleanup');
-          app.close(w);
+      @instance <>
+        "guardInstance(input);" <>
+        @execute_dom <>
+        """
+        var windows=app.windows(),w=null;
+        for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
+        if(w){
+          var tabs=w.tabs();
+          if(tabs && tabs.length>0){
+            if(tabs.length!==1)throw new Error('Owned Safari window has additional tabs; refusing cleanup');
+            if(input.document_token!==null || input.expected_url!==null)
+              runDOM(tabs[0]);
+            app.close(w);
+          }
         }
-      }
-      """,
-      %{window_id: page.window_id},
+        """,
+      Map.merge(target(page), %{code: browser_code(page, "return true;", %{})}),
       opts
     )
   end
@@ -51,16 +86,83 @@ defmodule ExMacOSControl.Safari.Compositions do
     with {:ok, target} <-
            Automation.query(
              "com.apple.Safari",
-             """
-             if(app.windows.length===0)throw new Error('Safari window not found');
-             var w=app.windows[0],t=w.currentTab();
-             return {window_id:w.id(),tab_index:t.index(),url:t.url()};
-             """,
+             @instance <>
+               """
+               var instance=safariInstance();
+               if(app.windows.length===0)throw new Error('Safari window not found');
+               var w=app.windows[0],t=w.currentTab();
+               guardInstance(instance);
+               return {window_id:w.id(),tab_index:t.index(),url:t.url(),application_pid:instance.application_pid,application_started_at:instance.application_started_at};
+               """,
              %{},
              opts
            ) do
-      {:ok, %Page{window_id: target.window_id, tab_index: target.tab_index, url: target.url}}
+      {:ok, struct!(Page, target)}
     end
+  end
+
+  @doc "Pins the current URL and document instance. Reloads and navigation invalidate this returned handle."
+  def pin_document(%Page{} = page, opts \\ []) do
+    token = Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
+
+    with {:ok, pinned} <-
+           dom(
+             page,
+             """
+             if(!document.__exmc_document)Object.defineProperty(document,'__exmc_document',{value:input.token});
+             return {document_token:document.__exmc_document,expected_url:location.href};
+             """,
+             %{token: token},
+             opts
+           ) do
+      {:ok, %{page | document_token: pinned.document_token, expected_url: pinned.expected_url}}
+    end
+  end
+
+  @doc "Navigates deliberately and returns a newly pinned handle for the resulting document."
+  def navigate_page(%Page{} = page, url, opts \\ []) do
+    with :ok <- waiting_options(opts) do
+      Composition.run(fn -> navigate_and_pin(page, url, opts) end, Keyword.take(opts, @execution))
+    end
+  end
+
+  defp navigate_and_pin(page, url, opts) do
+    with :ok <- navigate_and_wait(page, url, Keyword.take(opts, [:interval])),
+         do: pin_document(%{unpin(page) | url: url})
+  end
+
+  defp unpin(page), do: %{page | document_token: nil, expected_url: nil}
+
+  defp target(page),
+    do:
+      Map.take(Map.from_struct(page), [
+        :window_id,
+        :tab_index,
+        :owned,
+        :application_pid,
+        :application_started_at,
+        :document_token,
+        :expected_url
+      ])
+
+  defp browser_code(page, body, params) do
+    encoded = params |> Jason.encode!() |> Jason.encode!(escape: :javascript_safe)
+
+    guard =
+      page
+      |> Map.from_struct()
+      |> Map.take([:document_token, :expected_url])
+      |> Jason.encode!()
+      |> Jason.encode!(escape: :javascript_safe)
+
+    "JSON.stringify((function(){try{return {exmc_dom:1,ok:true,result:(function(input,guard){" <>
+      @document_guard <>
+      body <>
+      "})(JSON.parse(" <>
+      encoded <>
+      "),JSON.parse(" <>
+      guard <>
+      "))};}catch(e){return {exmc_dom:1,ok:false,error:String(e.message||e)};}})())"
   end
 
   def snapshot(%Page{} = page, opts \\ []) do
@@ -211,7 +313,7 @@ defmodule ExMacOSControl.Safari.Compositions do
         previous != url and hd(String.split(previous, "#", parts: 2)) == hd(String.split(url, "#", parts: 2))
 
       poll(
-        page,
+        unpin(page),
         "return document.readyState==='complete' && (window.__exmc_navigation!==input.token || (input.same_document && location.href===input.url));",
         %{token: token, url: url, same_document: same_document},
         opts
@@ -222,7 +324,7 @@ defmodule ExMacOSControl.Safari.Compositions do
   defp dispatch_navigation(page, previous, url) when previous == url,
     do: dom_action(page, "location.reload();", %{})
 
-  defp dispatch_navigation(page, _previous, url), do: Safari.navigate(page.window_id, page.tab_index, url)
+  defp dispatch_navigation(page, _previous, url), do: dom_action(page, "location.href=input.url;", %{url: url})
 
   defp valid_field?({selector, value}) when is_binary(selector) and is_binary(value),
     do: String.trim(selector) != "" and not String.contains?(selector, <<0>>)
@@ -245,22 +347,24 @@ defmodule ExMacOSControl.Safari.Compositions do
   end
 
   defp dom(page, body, params, opts \\ []) do
-    encoded = params |> Jason.encode!() |> Jason.encode!(escape: :javascript_safe)
-    code = "JSON.stringify((function(input){" <> body <> "})(JSON.parse(" <> encoded <> ")))"
+    code = browser_code(page, body, params)
 
     Automation.query(
       "com.apple.Safari",
-      """
-      var windows=app.windows(),w=null;
-      for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
-      if(!w)throw new Error('Safari window not found');
-      var tabs=w.tabs();
-      if(!tabs || tabs.length===0)throw new Error('Safari window has no tabs');
-      if(input.owned && tabs.length!==1)throw new Error('Owned Safari window has additional tabs');
-      var t=tabs[input.tab_index-1];if(!t)throw new Error('Tab not found');
-      return JSON.parse(app.doJavaScript(input.code,{in:t}));
-      """,
-      %{window_id: page.window_id, tab_index: page.tab_index, owned: page.owned, code: code},
+      @instance <>
+        "guardInstance(input);" <>
+        @execute_dom <>
+        """
+        var windows=app.windows(),w=null;
+        for(var i=0;i<windows.length;i++){if(windows[i].id()===input.window_id){w=windows[i];break;}}
+        if(!w)throw new Error('Safari window not found');
+        var tabs=w.tabs();
+        if(!tabs || tabs.length===0)throw new Error('Safari window has no tabs');
+        if(input.owned && tabs.length!==1)throw new Error('Owned Safari window has additional tabs');
+        var t=tabs[input.tab_index-1];if(!t)throw new Error('Tab not found');
+        return runDOM(t);
+        """,
+      Map.put(target(page), :code, code),
       opts
     )
   end
@@ -281,21 +385,27 @@ defmodule ExMacOSControl.Safari.Compositions do
 
   defp do_open_page(url) do
     Composition.effect(:open_page, fn ->
-      source = """
-      on run argv
-        tell application id "com.apple.Safari"
-          make new document with properties {URL:item 1 of argv}
-          return id of front window
-        end tell
-      end run
-      """
-
-      with {:ok, output} <- ExMacOSControl.run_applescript(source, args: [url]),
-           {id, ""} when id > 0 <- Integer.parse(String.trim(output)) do
-        {:ok, %Page{window_id: id, tab_index: 1, url: url, owned: true}}
+      with {:ok, data} <-
+             Automation.query(
+               "com.apple.Safari",
+               @instance <>
+                 """
+                 // A normal app query launches Safari when this explicit open requires it.
+                 app.windows();var before=safariInstance();
+                 app.documents.push(app.Document({url:input.url}));
+                 guardInstance(before);var w=app.windows()[0];
+                 return {window_id:w.id(),tab_index:1,url:input.url,owned:true,
+                   application_pid:before.application_pid,application_started_at:before.application_started_at};
+                 """,
+               %{url: url}
+             ),
+           true <-
+             is_integer(data[:window_id]) and is_integer(data[:application_pid]) and
+               is_number(data[:application_started_at]) do
+        {:ok, struct!(Page, data)}
       else
         {:error, _} = error -> error
-        _ -> {:error, Error.execution_error("Safari did not return a window ID", outcome: :unknown)}
+        _ -> {:error, Error.execution_error("Safari did not return a bound window identity", outcome: :unknown)}
       end
     end)
   end
