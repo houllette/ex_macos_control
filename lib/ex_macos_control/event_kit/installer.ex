@@ -49,29 +49,29 @@ defmodule ExMacOSControl.EventKit.Installer do
 
     try do
       with {:ok, %{stdout: arch}} <- command("/usr/bin/uname", ["-m"]),
-           args = [
-             "swiftc",
-             "-warnings-as-errors",
-             "-module-cache-path",
-             cache,
-             "-target",
-             String.trim(arch) <> "-apple-macosx14.0",
-             Path.join(priv, "main.swift"),
-             "-o",
-             binary,
-             "-framework",
-             "EventKit",
-             "-framework",
-             "Foundation",
-             "-Xlinker",
-             "-sectcreate",
-             "-Xlinker",
-             "__TEXT",
-             "-Xlinker",
-             "__info_plist",
-             "-Xlinker",
-             info
-           ],
+           args =
+             [
+               "swiftc",
+               "-warnings-as-errors",
+               "-module-cache-path",
+               cache,
+               "-target",
+               String.trim(arch) <> "-apple-macosx14.0",
+               "-o",
+               binary,
+               "-framework",
+               "EventKit",
+               "-framework",
+               "Foundation",
+               "-Xlinker",
+               "-sectcreate",
+               "-Xlinker",
+               "__TEXT",
+               "-Xlinker",
+               "__info_plist",
+               "-Xlinker",
+               info
+             ] ++ Path.wildcard(Path.join(priv, "*.swift")),
            {:ok, _} <- command("/usr/bin/xcrun", args),
            {:ok, _} <-
              command("/usr/bin/codesign", [

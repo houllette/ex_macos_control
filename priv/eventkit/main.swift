@@ -193,7 +193,7 @@ final class Bridge {
             let pending = items.filter { !$0.isCompleted }
             for item in pending { item.isCompleted = true; try store.save(item, commit: false) }
             if !pending.isEmpty { try commit() }; return items.map(reminderData)
-        default: throw BridgeFailure("execution_error", "Unknown EventKit operation")
+        default: return try calendarOperation(op, input)
         }
     }
 }

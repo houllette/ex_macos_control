@@ -9,7 +9,8 @@ defmodule ExMacOSControl.EventKit.Reference do
   def validate(%__MODULE__{backend: :eventkit, kind: kind, id: id} = ref, expected) do
     if kind in @kinds and (expected == :any or kind == expected) and string?(id) and
          (kind in [:calendar, :reminder_list] or string?(ref.calendar_id)) and
-         Enum.all?([ref.external_id, ref.occurrence_at, ref.start_at], &(is_nil(&1) or string?(&1))),
+         optional_fields?(ref) and
+         event_times?(ref),
        do: :ok,
        else: invalid()
   end
@@ -36,6 +37,14 @@ defmodule ExMacOSControl.EventKit.Reference do
     |> Map.update!(:kind, &Atom.to_string/1)
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
+
+  defp event_times?(%__MODULE__{kind: :event} = ref), do: absolute?(ref.start_at) and absolute?(ref.occurrence_at)
+  defp event_times?(_), do: true
+  defp absolute?(value) when is_binary(value), do: match?({:ok, _, _}, DateTime.from_iso8601(value))
+  defp absolute?(_), do: false
+
+  defp optional_fields?(ref),
+    do: Enum.all?([ref.external_id, ref.occurrence_at, ref.start_at], &(is_nil(&1) or string?(&1)))
 
   defp string?(value), do: is_binary(value) and byte_size(value) in 1..4096 and not String.contains?(value, <<0>>)
 
