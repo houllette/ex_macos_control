@@ -23,6 +23,15 @@ defmodule ExMacOSControl.CompositionLiveSession do
     assert host["session"] == "Aqua", "Personal qualification must run from the logged-in GUI session"
     previous = Application.get_env(:ex_macos_control, :adapter)
     Application.put_env(:ex_macos_control, :adapter, OSAScriptAdapter)
+    previous_backend = Application.get_env(:ex_macos_control, :desktop_session_backend)
+    Application.put_env(:ex_macos_control, :desktop_session_backend, ExMacOSControl.Desktop.Session.Native)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous_backend,
+        do: Application.put_env(:ex_macos_control, :desktop_session_backend, previous_backend),
+        else: Application.delete_env(:ex_macos_control, :desktop_session_backend)
+    end)
+
     ExUnit.Callbacks.on_exit(fn -> Application.put_env(:ex_macos_control, :adapter, previous) end)
     marker = "EXMC-QA-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     root = Path.expand("tmp/composition-qualification/" <> marker)
@@ -49,7 +58,6 @@ defmodule ExMacOSControl.CompositionLiveSession do
     end)
 
     desktop = DesktopSession.start(apps: apps, finder: context[:finder] || false)
-    Enum.each(apps, &prepare_app/1)
     session = Map.put(session, :desktop, desktop.desktop_directory)
     event(session, "started", %{test: to_string(context.test), macos: host["macos"]})
     session
@@ -159,9 +167,4 @@ defmodule ExMacOSControl.CompositionLiveSession do
   defp permission_state({:ok, state}), do: state
   defp permission_state({:error, _}), do: :error
   defp permission_state(state) when is_atom(state), do: state
-
-  defp prepare_app(identity) when identity in ["com.apple.reminders", "com.apple.iCal"],
-    do: assert({:ok, _} = Applications.open(identity, background: true, timeout: 15_000))
-
-  defp prepare_app(identity), do: assert({:ok, _} = Applications.ensure_running(identity, timeout: 15_000))
 end

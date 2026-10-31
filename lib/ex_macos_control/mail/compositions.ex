@@ -178,7 +178,9 @@ defmodule ExMacOSControl.Mail.Compositions do
           if(matches.length>1)throw new Error('Ambiguous outgoing draft');
           if(matches.length===1){
             if(matches[0].subject()!==input.subject)throw new Error('Outgoing draft identity changed');
-            app.close(matches[0],{saving:'no'});
+            var target=app.outgoingMessages.byId(Number(input.outgoing_id));
+            if(target.subject()!==input.subject)throw new Error('Outgoing draft identity changed');
+            app.close(target,{saving:'no'});
           }
         }
         if(box.messages.id().map(String).indexOf(String(input.id))>=0){#{resolve()}app.delete(o);}

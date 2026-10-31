@@ -120,7 +120,8 @@ defmodule ExMacOSControl.VerifiedHandoffsTest do
 
     expect(ExMacOSControl.AdapterMock, :run_javascript, fn source, opts ->
       assert input(opts)["mail_pid"] == 42
-      assert source =~ "app.close(matches[0],{saving:'no'})"
+      assert source =~ "app.outgoingMessages.byId(Number(input.outgoing_id))"
+      assert source =~ "app.close(target,{saving:'no'})"
       response(true)
     end)
 

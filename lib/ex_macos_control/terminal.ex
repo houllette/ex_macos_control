@@ -1,11 +1,13 @@
 defmodule ExMacOSControl.Terminal do
   @moduledoc """
-  Terminal sessions and explicit shell-command execution. Command completion is
-  separate from Terminal accepting a command. Commands open a new window unless
-  an existing window ID and optional 1-based tab index are supplied. Terminal's
+  Commands without a target run through /bin/sh to completion in an owned
+  Terminal window and close it by default. keep_open: true explicitly uses an
+  interactive session and keeps it open. Existing target windows are borrowed
+  and always remain open. run/2 returns output and exit status; do_script/2
+  returns :ok for a successful managed command. Terminal's
   scripting dictionary cannot create tabs; `new_tab: true` is rejected.
   """
-  alias ExMacOSControl.{Automation, Composition, Wait}
+  alias ExMacOSControl.{Automation, Composition, Error, GUI, Wait}
   @app "com.apple.Terminal"
 
   def list_sessions(opts \\ []) do
@@ -19,19 +21,49 @@ defmodule ExMacOSControl.Terminal do
 
   def do_script(command, opts \\ []) do
     with :ok <- Automation.required_string(command, "Shell command"),
-         :ok <- Automation.options(opts, [:window_id, :tab_index, :new_tab, :timeout, :max_output_bytes]),
+         :ok <- Automation.options(opts, [:window_id, :tab_index, :new_tab, :keep_open, :timeout, :max_output_bytes]),
          :ok <- target_options(opts) do
-      Automation.action(
-        @app,
-        "var options={}; if(input.window_id!==null){var w=byId(app.windows,input.window_id); var target=w.tabs[input.tab_index-1]; if(!target.exists()) throw new Error('Object not found'); options.in=target;} app.doScript(input.command,options);",
-        %{
-          command: command,
-          window_id: opts[:window_id],
-          tab_index: Keyword.get(opts, :tab_index, 1)
-        },
-        Automation.execution_options(opts)
-      )
+      if opts[:window_id] || opts[:keep_open] == true, do: dispatch(command, opts), else: managed(command, opts)
     end
+  end
+
+  @doc "Runs a bounded shell command in Aqua, closes its owned window and returns output, exit status and cleanup evidence."
+  def run(command, opts \\ []) do
+    with :ok <- Automation.required_string(command, "Shell command"),
+         :ok <- Automation.options(opts, [:timeout, :max_output_bytes, :keep_open]),
+         true <- is_boolean(Keyword.get(opts, :keep_open, false)) do
+      options = opts |> Keyword.delete(:keep_open) |> Keyword.put(:keep_window, opts[:keep_open] || false)
+      GUI.run("/bin/sh", ["-c", command], options)
+    else
+      false -> Automation.invalid("keep_open must be a boolean")
+      error -> error
+    end
+  end
+
+  defp managed(command, opts) do
+    case run(command, Keyword.take(opts, [:timeout, :max_output_bytes])) do
+      {:ok, %{exit_status: 0}} ->
+        :ok
+
+      {:ok, result} ->
+        {:error, Error.execution_error("Terminal command failed", outcome: :unknown, command_result: result)}
+
+      error ->
+        error
+    end
+  end
+
+  defp dispatch(command, opts) do
+    Automation.action(
+      @app,
+      "var options={}; if(input.window_id!==null){var w=byId(app.windows,input.window_id); var target=w.tabs[input.tab_index-1]; if(!target.exists()) throw new Error('Object not found'); options.in=target;} app.doScript(input.command,options);",
+      %{
+        command: command,
+        window_id: opts[:window_id],
+        tab_index: Keyword.get(opts, :tab_index, 1)
+      },
+      Automation.execution_options(opts)
+    )
   end
 
   def read_session(window_id, tab_index, opts \\ []) do
@@ -76,6 +108,9 @@ defmodule ExMacOSControl.Terminal do
 
   defp target_options(opts) do
     cond do
+      not is_boolean(Keyword.get(opts, :keep_open, false)) ->
+        Automation.invalid("keep_open must be a boolean")
+
       Keyword.get(opts, :new_tab, false) != false ->
         Automation.invalid("Terminal scripting cannot create tabs; use an existing window ID and tab index")
 

@@ -310,16 +310,25 @@ defmodule ExMacOSControl.Composition do
   end
 
   @doc false
-  def resource(resource, fun, cleanup) do
+  def resource(resource, fun, cleanup), do: resource(resource, fun, cleanup, [])
+
+  @doc false
+  def resource(resource, fun, cleanup, opts) do
     outcome =
       try do
-        {:returned, step(:use_resource, fn -> fun.(resource) end)}
+        {:returned, use_resource(resource, fun, opts)}
       catch
         kind, reason -> {:raised, kind, reason, __STACKTRACE__}
       end
 
     cleaned = cleanup(fn -> cleanup.(resource) end)
     finish_resource(outcome, cleaned, resource)
+  end
+
+  defp use_resource(resource, fun, opts) do
+    if Keyword.get(opts, :trace_usage, true),
+      do: step(:use_resource, fn -> fun.(resource) end),
+      else: guard(fn -> fun.(resource) end)
   end
 
   @doc false

@@ -1,10 +1,20 @@
 defmodule ExMacOSControl.DesktopSession do
   @moduledoc false
   import ExUnit.Assertions
+  alias ExMacOSControl.Desktop.Session.Native
   alias ExMacOSControl.{OSAScriptAdapter, Script}
 
   def start(opts \\ []) do
     lock()
+    previous_backend = Application.get_env(:ex_macos_control, :desktop_session_backend)
+    Application.put_env(:ex_macos_control, :desktop_session_backend, Native)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous_backend,
+        do: Application.put_env(:ex_macos_control, :desktop_session_backend, previous_backend),
+        else: Application.delete_env(:ex_macos_control, :desktop_session_backend)
+    end)
+
     directory = Path.expand("tmp/desktop-#{Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)}")
     File.mkdir_p!(directory)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(directory) end)
@@ -44,6 +54,35 @@ defmodule ExMacOSControl.DesktopSession do
                  timeout: 5000
                )
     end)
+
+    original_adapter = Application.get_env(:ex_macos_control, :adapter)
+    Application.put_env(:ex_macos_control, :adapter, OSAScriptAdapter)
+
+    try do
+      assert {:ok, before} = Native.snapshot(apps)
+
+      owned =
+        Enum.flat_map(apps, fn identity ->
+          assert {:ok, windows} = Native.prepare(identity, before)
+          # Register immediately so a later preparation failure still releases these windows.
+          ExUnit.Callbacks.on_exit(fn ->
+            current_adapter = Application.get_env(:ex_macos_control, :adapter)
+            Application.put_env(:ex_macos_control, :adapter, OSAScriptAdapter)
+
+            try do
+              Enum.each(Enum.reverse(windows), fn ref -> assert :ok = Native.close(ref) end)
+            after
+              Application.put_env(:ex_macos_control, :adapter, current_adapter)
+            end
+          end)
+
+          windows
+        end)
+
+      _ = owned
+    after
+      Application.put_env(:ex_macos_control, :adapter, original_adapter)
+    end
 
     safari = if opts[:safari], do: safari_window()
 

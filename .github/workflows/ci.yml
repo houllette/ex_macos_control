@@ -75,3 +75,4 @@ jobs:
           test/integration/verified_draft_contract_test.exs
           test/integration/qualification_contract_test.exs
           test/integration/event_kit_contract_test.exs
+          test/integration/window_cleanup_contract_test.exs

@@ -1,6 +1,7 @@
 defmodule ExMacOSControl.Calendar do
   @moduledoc "Calendar discovery and events scoped by calendar ID, with timezone-aware dates and recurrence text."
   alias ExMacOSControl.{Automation, Composition, Resources, Validation}
+  alias ExMacOSControl.Desktop.Session
   @app "com.apple.iCal"
   @collection "byId(app.calendars, input.calendar_id).events"
   @schema [
@@ -258,7 +259,8 @@ defmodule ExMacOSControl.Calendar do
   def create_event_with_alarms(calendar_id, attrs, alarms, opts \\ []) do
     with true <- is_list(alarms) and length(alarms) <= 1000,
          :ok <- Validation.all(alarms, &validate_alarm/1) do
-      Composition.run(
+      Session.with_apps(
+        ["com.apple.iCal"],
         fn -> do_create_event_with_alarms(calendar_id, attrs, alarms) end,
         opts
       )
