@@ -29,12 +29,17 @@ defmodule ExMacOSControl.DesktopSession do
                OSAScriptAdapter.run_javascript(
                  """
                  ObjC.import('AppKit');
-                 #{Jason.encode!(apps -- running)}.forEach(function(id){
-                   var app=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($(id)).firstObject;
-                   if(!app.isNil()) app.hide;
-                 });
-                 var a=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($(#{Jason.encode!(focus)})).firstObject;
-                 if(!a.isNil()) a.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+                 var current=$.NSWorkspace.sharedWorkspace.frontmostApplication;
+                 var currentId=current.isNil()?'':ObjC.unwrap(current.bundleIdentifier);
+                 var controlled=#{Jason.encode!(apps ++ if(opts[:finder], do: ["com.apple.finder"], else: []))};
+                 if(currentId===#{Jason.encode!(focus)} || controlled.indexOf(currentId)>=0){
+                   #{Jason.encode!(apps -- running)}.forEach(function(id){
+                     var app=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($(id)).firstObject;
+                     if(!app.isNil()) app.hide;
+                   });
+                   var a=$.NSRunningApplication.runningApplicationsWithBundleIdentifier($(#{Jason.encode!(focus)})).firstObject;
+                   if(!a.isNil()) a.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+                 }
                  """,
                  timeout: 5000
                )

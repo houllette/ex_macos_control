@@ -14,12 +14,12 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
   alias ExMacOSControl.CompositionLiveSession, as: Live
   @moduletag :personal
+  @moduletag final_live: true
   @moduletag timeout: 180_000
 
   enabled = System.get_env("EXMC_LIVE_TESTS") == "1" and System.get_env("EXMC_PERSONAL_TESTS") == "1"
-  included = Enum.any?(ExUnit.configuration()[:include], &(&1 in [:personal, {:personal, true}]))
 
-  unless enabled and included,
+  unless enabled,
     do: @moduletag(skip: "Requires --include personal and both EXMC_LIVE_TESTS/EXMC_PERSONAL_TESTS=1")
 
   setup context do
@@ -69,7 +69,14 @@ defmodule ExMacOSControl.CompositionsLiveTest do
     path = Path.join(live.desktop, live.marker <> ".txt")
     File.write!(path, live.marker)
     assert {:ok, previous} = Finder.get_selection()
-    on_exit(fn -> Finder.set_selection(Enum.filter(previous, &File.exists?/1)) end)
+
+    on_exit(fn ->
+      case Finder.get_selection() do
+        {:ok, [^path]} -> assert :ok = Finder.set_selection(Enum.filter(previous, &File.exists?/1))
+        _ -> Live.event(live, "restoration_skipped", %{scope: :finder_selection})
+      end
+    end)
+
     assert {:ok, capture} = Finder.select_and_capture([path])
     assert capture.paths == [path]
 
@@ -125,19 +132,30 @@ defmodule ExMacOSControl.CompositionsLiveTest do
                live,
                :reminder,
                fn -> Reminders.create_reminder(list, title: live.marker, body: live.marker) end,
-               &Reminders.delete_reminder/1,
-               &Live.absent("com.apple.reminders", "reminders", &1),
+               &Reminders.delete_reminder(&1, list_id: list),
+               fn id ->
+                 Live.query(
+                   "com.apple.reminders",
+                   "return app.lists.byId(input.list).reminders.id().indexOf(input.id)<0;",
+                   %{list: list, id: id}
+                 )
+               end,
                %{parent_id: list}
              )
 
-    start_at = DateTime.utc_now() |> DateTime.add(86_400) |> DateTime.truncate(:second)
+    date = DateTime.utc_now() |> DateTime.add(86_400) |> DateTime.to_date()
+    start_at = DateTime.new!(date, ~T[12:00:00], "Etc/UTC")
     attrs = [start_at: start_at, end_at: DateTime.add(start_at, 3600)]
 
     event_intent = ExMacOSControl.LiveEvidence.intent(live, :event, %{calendar_id: calendar})
 
     assert {:ok, %{event_id: event}} =
              Live.effect(live, :reminder_to_event, fn ->
-               Workflows.reminder_to_event(reminder, calendar, attrs, complete_reminder: true, verify_event: true)
+               Workflows.reminder_to_event(reminder, calendar, attrs,
+                 complete_reminder: true,
+                 verify_event: true,
+                 list_id: list
+               )
              end)
 
     Live.own(live, :event, event, fn -> Calendar.delete_event(calendar, event) end,
@@ -147,7 +165,7 @@ defmodule ExMacOSControl.CompositionsLiveTest do
 
     assert {:ok, %{title: title}} = Calendar.get_event(calendar, event)
     assert title == live.marker
-    assert {:ok, %{completed: true}} = Reminders.get_reminder(reminder)
+    assert {:ok, %{completed: true}} = Reminders.get_reminder(reminder, list_id: list)
     Live.event(live, "verified")
   end
 

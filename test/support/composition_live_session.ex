@@ -35,10 +35,13 @@ defmodule ExMacOSControl.CompositionLiveSession do
         case: to_string(context.test),
         host: host,
         revision: String.trim(revision),
+        mode: System.get_env("EXMC_CAMPAIGN_MODE", "qualification"),
         source_sha256: source_fingerprint(),
         apps: Map.new(apps, &{&1, app_version(&1)}),
         permissions: permission_states(apps)
       })
+
+    ExMacOSControl.LiveEvidenceFormatter.register(context, session)
 
     ExUnit.Callbacks.on_exit(fn ->
       summary = LiveEvidence.finish(session)

@@ -86,6 +86,25 @@ defmodule ExMacOSControl.CaptureTest do
     assert capture.title == "Original"
   end
 
+  test "Calendar capture preserves all-day and recurrence semantics without another native read" do
+    expect(ExMacOSControl.AdapterMock, :run_javascript, fn _, _ ->
+      response(%{
+        title: "Day",
+        start_at: "2026-11-02T07:00:00Z",
+        end_at: "2026-11-03T07:00:00Z",
+        all_day: true,
+        recurrence: "FREQ=DAILY;COUNT=2"
+      })
+    end)
+
+    assert {:ok,
+            %Event{all_day: true, recurrence: "FREQ=DAILY;COUNT=2", source: %{calendar_id: "calendar", id: "event"}} =
+              captured} = Capture.event("calendar", "event")
+
+    assert Capture.title(captured) == "Day"
+    assert Capture.render(captured) =~ captured.start_at
+  end
+
   defp page,
     do: %Page{
       title: "Page",

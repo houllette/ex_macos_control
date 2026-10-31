@@ -26,12 +26,14 @@ defmodule ExMacOSControl.UsageCampaignTest do
     {:ok, live: Live.start(context)}
   end
 
+  @tag utility: true
   @tag apps: ["com.apple.Safari", "com.apple.Notes", "com.apple.reminders", "com.apple.mail"]
   test "research utility reuses a capture across destinations after closing its source", %{live: live} do
     folder = folder(live)
     list = list(live)
 
     Enum.each(1..repeats(), fn index ->
+      Live.event(live, "iteration_started", %{iteration: index})
       html = Path.join(live.root, "page-#{index}.html")
       body = "#{live.marker}-#{index} 雪 <escaped>"
 
@@ -58,11 +60,13 @@ defmodule ExMacOSControl.UsageCampaignTest do
       assert reminder.title == url and reminder.body =~ url
       assert {:ok, saved} = Mail.get_draft(result.draft)
       assert saved.content =~ url
+      Live.event(live, "iteration_verified", %{iteration: index})
     end)
 
     Live.event(live, "verified", %{repeats: repeats()})
   end
 
+  @tag utility: true
   @tag apps: ["com.apple.finder", "com.apple.imageevents", "com.apple.mail"]
   test "file preparation copies and transforms owned images before drafting their outputs", %{live: live} do
     source = Path.join(live.root, "source.png")
@@ -70,6 +74,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
     File.write!(source, png)
 
     Enum.each(1..repeats(), fn index ->
+      Live.event(live, "iteration_started", %{iteration: index})
       staging = Path.join(live.root, "staging-#{index}")
       output = Path.join(live.root, "output-#{index}")
       File.mkdir!(staging)
@@ -92,17 +97,44 @@ defmodule ExMacOSControl.UsageCampaignTest do
       assert {:ok, %{dimensions: [16, 16]}} = ImageEvents.info(transformed)
       assert {:ok, %{attachments: [attachment]}} = Mail.get_draft(result.draft)
       assert attachment.size == File.stat!(transformed).size
+      saved_path = Path.join(live.root, "saved-attachment-#{index}.png")
+      refute File.exists?(saved_path)
+
+      assert {:ok, true} =
+               Live.effect(live, :save_owned_draft_attachment, fn ->
+                 Live.query(
+                   "com.apple.mail",
+                   """
+                   var o=app.draftsMailbox().messages.byId(input.id);
+                   if(o.subject()!==input.subject || (input.message_id && o.messageId()!==input.message_id))throw new Error('Draft identity changed');
+                   var attachments=o.mailAttachments();if(attachments.length!==1)throw new Error('Attachment count changed');
+                   app.save(attachments[0],{in:Path(input.path)});return true;
+                   """,
+                   %{
+                     id: result.draft.id,
+                     subject: result.draft.subject,
+                     message_id: result.draft.message_id,
+                     path: saved_path
+                   }
+                 )
+               end)
+
+      assert File.read!(saved_path) == File.read!(transformed)
+      Live.event(live, "iteration_verified", %{iteration: index})
     end)
 
     Live.event(live, "verified", %{repeats: repeats()})
   end
 
+  @tag utility: true
   @tag apps: ["com.apple.reminders", "com.apple.iCal"]
   test "scheduling utility verifies UTC-equivalent offset dates before source completion", %{live: live} do
     list = list(live)
     calendar = calendar(live)
 
     Enum.each(1..repeats(), fn index ->
+      Live.event(live, "iteration_started", %{iteration: index})
+
       assert {:ok, reminder} =
                Live.create(
                  live,
@@ -125,12 +157,14 @@ defmodule ExMacOSControl.UsageCampaignTest do
       assert {:ok, actual, _} = DateTime.from_iso8601(value.start_at)
       assert DateTime.compare(actual, ~U[2026-11-01 06:30:00Z]) == :eq
       assert {:ok, %{completed: true}} = Reminders.get_reminder(reminder, list_id: list)
+      Live.event(live, "iteration_verified", %{iteration: index})
     end)
 
     Live.event(live, "verified", %{repeats: repeats()})
   end
 
   @tag apps: ["com.apple.reminders", "com.apple.finder"]
+  @tag large_batch: true
   @tag timeout: 900_000
   test "one, ten and one hundred item batches preserve files and independently observable reminders", %{live: live} do
     list = list(live)
@@ -181,6 +215,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
   end
 
   @tag apps: ["com.apple.Safari"]
+  @tag final_live: true
   test "real DOM edits handle delayed controls, ambiguity, same-URL reload and stale windows", %{live: live} do
     html = Path.join(live.root, "form.html")
 
@@ -211,6 +246,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
     Live.event(live, "verified")
   end
 
+  @tag final_live: true
   test "a real native file write followed by an error requires observation and no replay", %{live: live} do
     path = Path.join(live.root, "persisted.txt")
     intent = Evidence.intent(live, :file, %{path: path})
@@ -234,6 +270,7 @@ defmodule ExMacOSControl.UsageCampaignTest do
   end
 
   @tag apps: ["com.apple.reminders", "com.apple.iCal"]
+  @tag final_live: true
   test "ambiguous repeated-hour dates are confirmed or safely refused before completing the source", %{live: live} do
     list = list(live)
     calendar = calendar(live)
@@ -271,7 +308,101 @@ defmodule ExMacOSControl.UsageCampaignTest do
     end
   end
 
+  @tag apps: ["com.apple.iCal"]
+  @tag final_live: true
+  test "all-day recurring Calendar captures retain native semantic fields", %{live: live} do
+    calendar = calendar(live)
+
+    assert {:ok, event} =
+             Live.effect(live, :create_recurring_event, fn ->
+               Composition.effect(
+                 :create_event,
+                 fn ->
+                   Calendar.create_event(calendar,
+                     title: live.marker,
+                     start_at: "2026-11-02T07:00:00Z",
+                     end_at: "2026-11-03T07:00:00Z",
+                     all_day: true,
+                     recurrence: "FREQ=DAILY;COUNT=2"
+                   )
+                 end,
+                 resource: :event,
+                 identity: %{calendar_id: calendar}
+               )
+             end)
+
+    assert {:ok, original} = Calendar.get_event(calendar, event)
+    assert {:ok, %Capture.Event{all_day: true} = capture} = Capture.event(calendar, event)
+    assert capture.recurrence =~ "FREQ=DAILY"
+    assert capture.recurrence == original.recurrence
+    assert capture.start_at == original.start_at and capture.end_at == original.end_at
+
+    deletion =
+      Live.effect(
+        live,
+        :delete_recurring_event,
+        fn ->
+          Composition.effect(:delete_event, fn -> Calendar.delete_event(calendar, event) end,
+            resource: :event,
+            identity: %{calendar_id: calendar, id: event}
+          )
+        end,
+        expect_error: true
+      )
+
+    assert {:ok, remaining} = Calendar.list_events(calendar, limit: 1000)
+    present = Enum.any?(remaining, &(&1.id == event))
+
+    outcome =
+      case deletion do
+        :ok ->
+          refute present
+          :confirmed
+
+        {:error, error} ->
+          assert error.details.outcome == :unknown
+          if present, do: :uncertain_remaining, else: :uncertain_absent
+      end
+
+    # The owned calendar is the cleanup boundary for a recurring series.
+    Live.event(live, "verified", %{recurring_delete: outcome})
+  end
+
+  @tag apps: ["com.apple.reminders"]
+  @tag final_live: true
+  test "scoped completion refuses missing IDs and preserves an unselected reminder", %{live: live} do
+    list = list(live)
+
+    assert {:ok, [first, untouched, last]} =
+             Live.effect(live, :create_scoped_targets, fn ->
+               Reminders.create_many(list, for(i <- 1..3, do: [title: "#{live.marker}-#{i}"]))
+             end)
+
+    assert {:error, %{type: :not_found, details: %{outcome: :not_started}}} =
+             Live.effect(
+               live,
+               :missing_target,
+               fn ->
+                 Reminders.complete_many([first, "x-apple-reminder://#{live.marker}-missing"], list_id: list)
+               end,
+               expect_error: true
+             )
+
+    assert {:ok, before} = Reminders.list_reminders(list)
+    assert Enum.all?(before, &(not &1.completed))
+
+    assert {:ok, [^first, ^last]} =
+             Live.effect(live, :complete_exact_targets, fn ->
+               Reminders.complete_many([first, last], list_id: list)
+             end)
+
+    assert {:ok, after_values} = Reminders.list_reminders(list)
+    assert Map.new(after_values, &{&1.id, &1.completed}) == %{first => true, untouched => false, last => true}
+    Live.event(live, "verified")
+  end
+
   @tag apps: ["com.apple.AddressBook"]
+  @tag final_live: true
   test "contact composition creates details in an owned group and preserves exact identity", %{live: live} do
     email = String.downcase(live.marker) <> "@example.invalid"
 
